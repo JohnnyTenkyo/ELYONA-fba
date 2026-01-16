@@ -6,8 +6,9 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Download, Upload, Search, Package, Factory, Plus, Minus } from 'lucide-react';
+import { Download, Upload, Search, Package, Factory, Plus, Minus, Truck } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function FactoryPlan() {
@@ -16,6 +17,7 @@ export default function FactoryPlan() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [categoryTab, setCategoryTab] = useState<'standard' | 'oversized'>('standard');
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -130,16 +132,29 @@ export default function FactoryPlan() {
     if (!skus) return [];
     return skus.filter(sku => {
       if (sku.isDiscontinued) return false;
+      if (sku.category !== categoryTab) return false;
       if (searchTerm && !sku.sku.toLowerCase().includes(searchTerm.toLowerCase())) return false;
       return true;
     });
-  }, [skus, searchTerm]);
+  }, [skus, searchTerm, categoryTab]);
 
-  // 按类别分组
-  const groupedSkus = useMemo(() => ({
-    standard: filteredSkus.filter(s => s.category === 'standard'),
-    oversized: filteredSkus.filter(s => s.category === 'oversized'),
-  }), [filteredSkus]);
+  // 计算各类别统计
+  const getCategoryStats = (category: 'standard' | 'oversized') => {
+    if (!skus) return { total: 0, needAdd: 0, excess: 0, normal: 0 };
+    const categorySkus = skus.filter(s => !s.isDiscontinued && s.category === category);
+    let needAdd = 0, excess = 0, normal = 0;
+    categorySkus.forEach(sku => {
+      const needs = calculateStockingNeeds(sku);
+      if (needs.isAdditionalNeeded) needAdd++;
+      else if (needs.isExcess) excess++;
+      else normal++;
+    });
+    return { total: categorySkus.length, needAdd, excess, normal };
+  };
+
+  const standardStats = getCategoryStats('standard');
+  const oversizedStats = getCategoryStats('oversized');
+  const currentStats = categoryTab === 'standard' ? standardStats : oversizedStats;
 
   // 导出Excel
   const handleExport = () => {
@@ -166,7 +181,8 @@ export default function FactoryPlan() {
     XLSX.utils.book_append_sheet(wb, ws, '工厂备货计划');
     
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    XLSX.writeFile(wb, `工厂备货计划_${selectedMonth}_${timestamp}.xlsx`);
+    const categoryName = categoryTab === 'standard' ? '标准件' : '大件';
+    XLSX.writeFile(wb, `工厂备货计划_${categoryName}_${selectedMonth}_${timestamp}.xlsx`);
     toast.success('导出成功');
   };
 
@@ -179,7 +195,8 @@ export default function FactoryPlan() {
     const ws = XLSX.utils.json_to_sheet(template);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '工厂库存模板');
-    XLSX.writeFile(wb, '工厂库存导入模板.xlsx');
+    const categoryName = categoryTab === 'standard' ? '标准件' : '大件';
+    XLSX.writeFile(wb, `工厂库存导入模板_${categoryName}.xlsx`);
   };
 
   // 导入工厂库存
@@ -241,8 +258,160 @@ export default function FactoryPlan() {
 
   const isLoading = skusLoading || inventoryLoading;
 
+  // 渲染表格
+  const renderTable = () => (
+    <div className="overflow-x-auto">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>日销量</th>
+            <th>FBA库存</th>
+            <th>在途库存</th>
+            <th>工厂库存</th>
+            <th>月度需求</th>
+            <th>建议备货</th>
+            <th>实际发货</th>
+            <th>差异</th>
+            <th>加单数量</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {isLoading ? (
+            <tr>
+              <td colSpan={11} className="text-center py-8">加载中...</td>
+            </tr>
+          ) : filteredSkus.length === 0 ? (
+            <tr>
+              <td colSpan={11} className="text-center py-8">
+                <Package className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
+                <p className="text-muted-foreground">暂无{categoryTab === 'standard' ? '标准件' : '大件'}数据</p>
+              </td>
+            </tr>
+          ) : (
+            <>
+              {filteredSkus.map(sku => {
+                const needs = calculateStockingNeeds(sku);
+                return (
+                  <tr
+                    key={sku.id}
+                    className={
+                      needs.isAdditionalNeeded ? 'bg-red-50' :
+                      needs.isExcess ? 'bg-green-50' : ''
+                    }
+                  >
+                    <td className="font-medium">{sku.sku}</td>
+                    <td>{needs.dailySales}</td>
+                    <td>{needs.fbaStock}</td>
+                    <td>{needs.inTransitStock}</td>
+                    <td>{needs.factoryStock}</td>
+                    <td>{needs.monthlyNeed}</td>
+                    <td>{needs.suggestedOrder}</td>
+                    <td>{needs.totalActual}</td>
+                    <td className={needs.difference > 0 ? 'text-green-600' : needs.difference < 0 ? 'text-red-600' : ''}>
+                      {needs.difference > 0 ? `+${needs.difference}` : needs.difference}
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => handleUpdateAdditional(sku, -10)}
+                        >
+                          <Minus className="w-3 h-3" />
+                        </Button>
+                        <span className={needs.additionalOrder > 0 ? 'text-red-600 font-medium' : ''}>
+                          {needs.additionalOrder}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => handleUpdateAdditional(sku, 10)}
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </td>
+                    <td>
+                      {needs.isAdditionalNeeded ? (
+                        <Badge className="bg-red-500">需加单</Badge>
+                      ) : needs.isExcess ? (
+                        <Badge className="bg-green-500">过量</Badge>
+                      ) : (
+                        <Badge variant="outline">正常</Badge>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {/* 合计行 */}
+              <tr className="bg-muted/50 font-medium">
+                <td>合计</td>
+                <td>{filteredSkus.reduce((sum, s) => sum + parseFloat(s.dailySales?.toString() || '0'), 0).toFixed(1)}</td>
+                <td>{filteredSkus.reduce((sum, s) => sum + (s.fbaStock || 0), 0)}</td>
+                <td>{filteredSkus.reduce((sum, s) => sum + (s.inTransitStock || 0), 0)}</td>
+                <td>{filteredSkus.reduce((sum, s) => {
+                  const f = factoryInventory?.find((fi: { skuId: number }) => fi.skuId === s.id);
+                  return sum + (f?.quantity || 0);
+                }, 0)}</td>
+                <td>{filteredSkus.reduce((sum, s) => sum + calculateStockingNeeds(s).monthlyNeed, 0)}</td>
+                <td>{filteredSkus.reduce((sum, s) => sum + calculateStockingNeeds(s).suggestedOrder, 0)}</td>
+                <td>{filteredSkus.reduce((sum, s) => sum + calculateStockingNeeds(s).totalActual, 0)}</td>
+                <td>-</td>
+                <td>{filteredSkus.reduce((sum, s) => {
+                  const f = factoryInventory?.find((fi: { skuId: number }) => fi.skuId === s.id);
+                  return sum + (f?.additionalOrder || 0);
+                }, 0)}</td>
+                <td>-</td>
+              </tr>
+            </>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
+      {/* 类别切换 */}
+      <div className="flex gap-4">
+        <button
+          onClick={() => setCategoryTab('standard')}
+          className={`flex items-center gap-3 px-6 py-4 rounded-lg border-2 transition-all ${
+            categoryTab === 'standard' 
+              ? 'border-primary bg-primary/5' 
+              : 'border-border hover:border-primary/50'
+          }`}
+        >
+          <Package className={`w-6 h-6 ${categoryTab === 'standard' ? 'text-primary' : 'text-muted-foreground'}`} />
+          <div className="text-left">
+            <p className={`font-medium ${categoryTab === 'standard' ? 'text-primary' : ''}`}>标准件</p>
+            <p className="text-sm text-muted-foreground">
+              共 {standardStats.total} 个SKU
+            </p>
+          </div>
+        </button>
+        <button
+          onClick={() => setCategoryTab('oversized')}
+          className={`flex items-center gap-3 px-6 py-4 rounded-lg border-2 transition-all ${
+            categoryTab === 'oversized' 
+              ? 'border-primary bg-primary/5' 
+              : 'border-border hover:border-primary/50'
+          }`}
+        >
+          <Truck className={`w-6 h-6 ${categoryTab === 'oversized' ? 'text-primary' : 'text-muted-foreground'}`} />
+          <div className="text-left">
+            <p className={`font-medium ${categoryTab === 'oversized' ? 'text-primary' : ''}`}>大件</p>
+            <p className="text-sm text-muted-foreground">
+              共 {oversizedStats.total} 个SKU
+            </p>
+          </div>
+        </button>
+      </div>
+
       {/* 工具栏 */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -304,7 +473,7 @@ export default function FactoryPlan() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">总SKU数</p>
-                <p className="text-xl font-bold">{filteredSkus.length}</p>
+                <p className="text-xl font-bold">{currentStats.total}</p>
               </div>
             </div>
           </CardContent>
@@ -317,9 +486,7 @@ export default function FactoryPlan() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">需加单</p>
-                <p className="text-xl font-bold text-red-600">
-                  {filteredSkus.filter(s => calculateStockingNeeds(s).isAdditionalNeeded).length}
-                </p>
+                <p className="text-xl font-bold text-red-600">{currentStats.needAdd}</p>
               </div>
             </div>
           </CardContent>
@@ -332,9 +499,7 @@ export default function FactoryPlan() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">过量</p>
-                <p className="text-xl font-bold text-green-600">
-                  {filteredSkus.filter(s => calculateStockingNeeds(s).isExcess).length}
-                </p>
+                <p className="text-xl font-bold text-green-600">{currentStats.excess}</p>
               </div>
             </div>
           </CardContent>
@@ -347,12 +512,7 @@ export default function FactoryPlan() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">正常</p>
-                <p className="text-xl font-bold">
-                  {filteredSkus.filter(s => {
-                    const needs = calculateStockingNeeds(s);
-                    return !needs.isAdditionalNeeded && !needs.isExcess;
-                  }).length}
-                </p>
+                <p className="text-xl font-bold">{currentStats.normal}</p>
               </div>
             </div>
           </CardContent>
@@ -364,106 +524,11 @@ export default function FactoryPlan() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Factory className="w-5 h-5" />
-            {selectedMonth.replace('-', '年')}月 工厂备货计划
+            {selectedMonth.replace('-', '年')}月 {categoryTab === 'standard' ? '标准件' : '大件'}工厂备货计划
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>类别</th>
-                  <th>日销量</th>
-                  <th>FBA库存</th>
-                  <th>在途库存</th>
-                  <th>工厂库存</th>
-                  <th>月度需求</th>
-                  <th>建议备货</th>
-                  <th>实际发货</th>
-                  <th>差异</th>
-                  <th>加单数量</th>
-                  <th>状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={12} className="text-center py-8">加载中...</td>
-                  </tr>
-                ) : filteredSkus.length === 0 ? (
-                  <tr>
-                    <td colSpan={12} className="text-center py-8">
-                      <Package className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
-                      <p className="text-muted-foreground">暂无数据</p>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredSkus.map(sku => {
-                    const needs = calculateStockingNeeds(sku);
-                    return (
-                      <tr
-                        key={sku.id}
-                        className={
-                          needs.isAdditionalNeeded ? 'bg-red-50' :
-                          needs.isExcess ? 'bg-green-50' : ''
-                        }
-                      >
-                        <td className="font-medium">{sku.sku}</td>
-                        <td>
-                          <Badge variant={sku.category === 'standard' ? 'default' : 'secondary'}>
-                            {sku.category === 'standard' ? '标准件' : '大件'}
-                          </Badge>
-                        </td>
-                        <td>{needs.dailySales}</td>
-                        <td>{needs.fbaStock}</td>
-                        <td>{needs.inTransitStock}</td>
-                        <td>{needs.factoryStock}</td>
-                        <td>{needs.monthlyNeed}</td>
-                        <td>{needs.suggestedOrder}</td>
-                        <td>{needs.totalActual}</td>
-                        <td className={needs.difference > 0 ? 'text-green-600' : needs.difference < 0 ? 'text-red-600' : ''}>
-                          {needs.difference > 0 ? `+${needs.difference}` : needs.difference}
-                        </td>
-                        <td>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 w-6 p-0"
-                              onClick={() => handleUpdateAdditional(sku, -10)}
-                            >
-                              <Minus className="w-3 h-3" />
-                            </Button>
-                            <span className={needs.additionalOrder > 0 ? 'text-red-600 font-medium' : ''}>
-                              {needs.additionalOrder}
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 w-6 p-0"
-                              onClick={() => handleUpdateAdditional(sku, 10)}
-                            >
-                              <Plus className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        </td>
-                        <td>
-                          {needs.isAdditionalNeeded ? (
-                            <Badge className="bg-red-500">需加单</Badge>
-                          ) : needs.isExcess ? (
-                            <Badge className="bg-green-500">过量</Badge>
-                          ) : (
-                            <Badge variant="outline">正常</Badge>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+          {renderTable()}
         </CardContent>
       </Card>
     </div>

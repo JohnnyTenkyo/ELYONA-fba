@@ -334,13 +334,34 @@ export async function getShipmentItemsBySku(skuId: number) {
   const db = await getDb();
   if (!db) return [];
   
+  // 只返回运输中的货件
   return db.select({
     item: shipmentItems,
     shipment: shipments
   })
   .from(shipmentItems)
   .innerJoin(shipments, eq(shipmentItems.shipmentId, shipments.id))
-  .where(eq(shipmentItems.skuId, skuId));
+  .where(and(
+    eq(shipmentItems.skuId, skuId),
+    eq(shipments.status, 'shipping')
+  ));
+}
+
+// 获取品牌所有货件明细
+export async function getAllShipmentItems(brandName: string) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return db.select({
+    id: shipmentItems.id,
+    shipmentId: shipmentItems.shipmentId,
+    skuId: shipmentItems.skuId,
+    sku: shipmentItems.sku,
+    quantity: shipmentItems.quantity,
+  })
+  .from(shipmentItems)
+  .innerJoin(shipments, eq(shipmentItems.shipmentId, shipments.id))
+  .where(eq(shipments.brandName, brandName));
 }
 
 // ==================== 促销管理 ====================

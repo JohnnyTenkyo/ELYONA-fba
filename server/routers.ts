@@ -404,16 +404,29 @@ export const appRouter = router({
           warehouse: z.string().optional(),
           quantity: z.number(),
           shipDate: z.string().optional(),
-          category: z.enum(['standard', 'oversized']),
         }))
       }))
       .mutation(async ({ input }) => {
+        // 获取所有SKU信息用于匹配类别
+        const allSkus = await db.getSkusByBrand(input.brandName);
+        const skuMap = new Map(allSkus.map(s => [s.sku, s]));
+        
         // 按货运号分组
-        const shipmentMap = new Map<string, typeof input.items>();
+        const shipmentMap = new Map<string, { items: typeof input.items; category: 'standard' | 'oversized' }>();
         for (const item of input.items) {
-          const existing = shipmentMap.get(item.trackingNumber) || [];
-          existing.push(item);
-          shipmentMap.set(item.trackingNumber, existing);
+          const skuRecord = skuMap.get(item.sku);
+          const category = skuRecord?.category || 'standard';
+          
+          const existing = shipmentMap.get(item.trackingNumber);
+          if (existing) {
+            existing.items.push(item);
+            // 如果有任何一个大件，整个货件按大件处理
+            if (category === 'oversized') {
+              existing.category = 'oversized';
+            }
+          } else {
+            shipmentMap.set(item.trackingNumber, { items: [item], category });
+          }
         }
         
         // 获取运输配置
@@ -423,9 +436,8 @@ export const appRouter = router({
         
         let createdCount = 0;
         
-        for (const [trackingNumber, items] of Array.from(shipmentMap.entries())) {
+        for (const [trackingNumber, { items, category }] of Array.from(shipmentMap.entries())) {
           const firstItem = items[0];
-          const category = firstItem.category;
           const totalDays = category === 'standard' ? standardDays : oversizedDays;
           
           // 计算预计到货日期
@@ -449,7 +461,7 @@ export const appRouter = router({
           const shipmentId = (result as any)[0]?.insertId;
           if (shipmentId) {
             for (const item of items) {
-              const skuRecord = await db.getSkuBySku(item.sku, input.brandName);
+              const skuRecord = skuMap.get(item.sku);
               await db.createShipmentItem({
                 shipmentId,
                 skuId: skuRecord?.id || 0,
@@ -469,6 +481,63 @@ export const appRouter = router({
       .input(z.object({ skuId: z.number() }))
       .query(async ({ input }) => {
         return db.getShipmentItemsBySku(input.skuId);
+      }),
+    
+    // 获取货件明细
+    getItems: publicProcedure
+      .input(z.object({ shipmentId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getShipmentItems(input.shipmentId);
+      }),
+    
+    // 获取所有货件明细（用于发货计划页面）
+    listAllItems: publicProcedure
+      .input(z.object({ brandName: z.string() }))
+      .query(async ({ input }) => {
+        return db.getAllShipmentItems(input.brandName);
+      }),
+    
+    // 更新预计到货日期
+    updateExpectedDate: publicProcedure
+      .input(z.object({
+        id: z.number(),
+        expectedArrivalDate: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const shipment = await db.getShipmentById(input.id);
+        if (!shipment) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: '货件不存在' });
+        }
+        
+        // 判断是提前还是延迟
+        let status = shipment.status;
+        if (shipment.shipDate && status === 'shipping') {
+          // 计算原始预计到货日期
+          const config = await db.getTransportConfig(shipment.brandName);
+          const totalDays = shipment.category === 'standard' 
+            ? (config?.standardShippingDays || 25) + (config?.standardShelfDays || 10)
+            : (config?.oversizedShippingDays || 35) + (config?.oversizedShelfDays || 10);
+          
+          const shipDate = new Date(shipment.shipDate);
+          const originalExpected = new Date(shipDate);
+          originalExpected.setDate(originalExpected.getDate() + totalDays);
+          
+          const newExpected = new Date(input.expectedArrivalDate);
+          if (newExpected < originalExpected) {
+            status = 'early';
+          } else if (newExpected > originalExpected) {
+            status = 'delayed';
+          } else {
+            status = 'shipping';
+          }
+        }
+        
+        await db.updateShipment(input.id, {
+          expectedArrivalDate: input.expectedArrivalDate,
+          status,
+        } as any);
+        
+        return { success: true, status };
       }),
   }),
 
@@ -527,24 +596,39 @@ export const appRouter = router({
         return { success: true };
       }),
     
+    // 获取促销项目的历史销量数据
+    getSales: publicProcedure
+      .input(z.object({ promotionId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getPromotionSales(input.promotionId);
+      }),
+    
     // 导入历史销量
     importSales: publicProcedure
       .input(z.object({
         promotionId: z.number(),
-        sales: z.array(z.object({
-          skuId: z.number(),
+        brandName: z.string(),
+        items: z.array(z.object({
           sku: z.string(),
-          lastYearSales: z.number(),
+          sales: z.number(),
         }))
       }))
       .mutation(async ({ input }) => {
-        for (const sale of input.sales) {
-          await db.upsertPromotionSale({
-            promotionId: input.promotionId,
-            ...sale,
-          });
+        let count = 0;
+        for (const item of input.items) {
+          // 通过SKU查找对应的skuId
+          const skuRecord = await db.getSkuBySku(item.sku, input.brandName);
+          if (skuRecord) {
+            await db.upsertPromotionSale({
+              promotionId: input.promotionId,
+              skuId: skuRecord.id,
+              sku: item.sku,
+              lastYearSales: item.sales,
+            });
+            count++;
+          }
         }
-        return { success: true };
+        return { success: true, count };
       }),
   }),
 

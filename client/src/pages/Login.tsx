@@ -183,9 +183,7 @@ export default function Login() {
                   >
                     {loginMutation.isPending ? '登录中...' : '登录'}
                   </Button>
-                  <p className="text-xs text-center text-muted-foreground">
-                    初始账户: ELYONA / 123456
-                  </p>
+
                 </form>
               </TabsContent>
 

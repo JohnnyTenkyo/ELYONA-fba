@@ -5,11 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import { AlertCircle, AlertTriangle, CheckCircle, Search, TrendingUp } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Search, TrendingUp, Package, Truck } from 'lucide-react';
 
 export default function InventoryAlert() {
   const { brandName } = useLocalAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const [categoryTab, setCategoryTab] = useState<'standard' | 'oversized'>('standard');
 
   const { data: summary } = trpc.dashboard.summary.useQuery(
     { brandName },
@@ -25,6 +26,22 @@ export default function InventoryAlert() {
     { brandName },
     { enabled: !!brandName }
   );
+
+  // 按类别过滤SKU
+  const filterByCategory = (skuList: any[]) => {
+    return skuList.filter(sku => sku.category === categoryTab);
+  };
+
+  // 计算各类别的统计
+  const getCategoryStats = (category: 'standard' | 'oversized') => {
+    const urgentCount = alerts?.urgent?.filter((s: any) => s.category === category).length || 0;
+    const warningCount = alerts?.warning?.filter((s: any) => s.category === category).length || 0;
+    const sufficientCount = alerts?.sufficient?.filter((s: any) => s.category === category).length || 0;
+    return { urgentCount, warningCount, sufficientCount };
+  };
+
+  const standardStats = getCategoryStats('standard');
+  const oversizedStats = getCategoryStats('oversized');
 
   // 计算建议日销量
   const calculateSuggestedDailySales = (sku: any, type: 'urgent' | 'warning' | 'sufficient') => {
@@ -58,10 +75,13 @@ export default function InventoryAlert() {
 
   // 过滤SKU
   const filterSkus = (skuList: any[]) => {
-    if (!searchTerm) return skuList;
-    return skuList.filter(sku => 
-      sku.sku.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    let filtered = filterByCategory(skuList);
+    if (searchTerm) {
+      filtered = filtered.filter(sku => 
+        sku.sku.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+    return filtered;
   };
 
   const renderSkuCard = (sku: any, type: 'urgent' | 'warning' | 'sufficient') => {
@@ -116,8 +136,46 @@ export default function InventoryAlert() {
     );
   };
 
+  const currentStats = categoryTab === 'standard' ? standardStats : oversizedStats;
+
   return (
     <div className="space-y-6">
+      {/* 类别切换 */}
+      <div className="flex gap-4">
+        <button
+          onClick={() => setCategoryTab('standard')}
+          className={`flex items-center gap-3 px-6 py-4 rounded-lg border-2 transition-all ${
+            categoryTab === 'standard' 
+              ? 'border-primary bg-primary/5' 
+              : 'border-border hover:border-primary/50'
+          }`}
+        >
+          <Package className={`w-6 h-6 ${categoryTab === 'standard' ? 'text-primary' : 'text-muted-foreground'}`} />
+          <div className="text-left">
+            <p className={`font-medium ${categoryTab === 'standard' ? 'text-primary' : ''}`}>标准件</p>
+            <p className="text-sm text-muted-foreground">
+              紧急 {standardStats.urgentCount} | 一般 {standardStats.warningCount} | 充足 {standardStats.sufficientCount}
+            </p>
+          </div>
+        </button>
+        <button
+          onClick={() => setCategoryTab('oversized')}
+          className={`flex items-center gap-3 px-6 py-4 rounded-lg border-2 transition-all ${
+            categoryTab === 'oversized' 
+              ? 'border-primary bg-primary/5' 
+              : 'border-border hover:border-primary/50'
+          }`}
+        >
+          <Truck className={`w-6 h-6 ${categoryTab === 'oversized' ? 'text-primary' : 'text-muted-foreground'}`} />
+          <div className="text-left">
+            <p className={`font-medium ${categoryTab === 'oversized' ? 'text-primary' : ''}`}>大件</p>
+            <p className="text-sm text-muted-foreground">
+              紧急 {oversizedStats.urgentCount} | 一般 {oversizedStats.warningCount} | 充足 {oversizedStats.sufficientCount}
+            </p>
+          </div>
+        </button>
+      </div>
+
       {/* 统计概览 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="border-red-200 bg-red-50/50">
@@ -128,7 +186,7 @@ export default function InventoryAlert() {
               </div>
               <div>
                 <p className="text-sm text-red-600">紧急预警</p>
-                <p className="text-3xl font-bold text-red-600">{summary?.urgentCount || 0}</p>
+                <p className="text-3xl font-bold text-red-600">{currentStats.urgentCount}</p>
                 <p className="text-xs text-red-500">7天内缺货且无在途</p>
               </div>
             </div>
@@ -143,7 +201,7 @@ export default function InventoryAlert() {
               </div>
               <div>
                 <p className="text-sm text-yellow-700">一般预警</p>
-                <p className="text-3xl font-bold text-yellow-700">{summary?.warningCount || 0}</p>
+                <p className="text-3xl font-bold text-yellow-700">{currentStats.warningCount}</p>
                 <p className="text-xs text-yellow-600">35天内缺货且无在途</p>
               </div>
             </div>
@@ -158,7 +216,7 @@ export default function InventoryAlert() {
               </div>
               <div>
                 <p className="text-sm text-green-700">库存充足</p>
-                <p className="text-3xl font-bold text-green-700">{summary?.sufficientCount || 0}</p>
+                <p className="text-3xl font-bold text-green-700">{currentStats.sufficientCount}</p>
                 <p className="text-xs text-green-600">可售卖35天以上</p>
               </div>
             </div>
@@ -182,15 +240,15 @@ export default function InventoryAlert() {
         <TabsList>
           <TabsTrigger value="urgent" className="gap-2">
             <AlertCircle className="w-4 h-4 text-red-500" />
-            紧急预警 ({alerts?.urgent?.length || 0})
+            紧急预警 ({filterSkus(alerts?.urgent || []).length})
           </TabsTrigger>
           <TabsTrigger value="warning" className="gap-2">
             <AlertTriangle className="w-4 h-4 text-yellow-500" />
-            一般预警 ({alerts?.warning?.length || 0})
+            一般预警 ({filterSkus(alerts?.warning || []).length})
           </TabsTrigger>
           <TabsTrigger value="sufficient" className="gap-2">
             <CheckCircle className="w-4 h-4 text-green-500" />
-            库存充足 ({alerts?.sufficient?.length || 0})
+            库存充足 ({filterSkus(alerts?.sufficient || []).length})
           </TabsTrigger>
         </TabsList>
 
@@ -201,7 +259,7 @@ export default function InventoryAlert() {
             <Card>
               <CardContent className="py-8 text-center">
                 <CheckCircle className="w-12 h-12 mx-auto text-green-500 mb-2" />
-                <p className="text-muted-foreground">暂无紧急预警</p>
+                <p className="text-muted-foreground">暂无{categoryTab === 'standard' ? '标准件' : '大件'}紧急预警</p>
               </CardContent>
             </Card>
           ) : (
@@ -218,7 +276,7 @@ export default function InventoryAlert() {
             <Card>
               <CardContent className="py-8 text-center">
                 <CheckCircle className="w-12 h-12 mx-auto text-green-500 mb-2" />
-                <p className="text-muted-foreground">暂无一般预警</p>
+                <p className="text-muted-foreground">暂无{categoryTab === 'standard' ? '标准件' : '大件'}一般预警</p>
               </CardContent>
             </Card>
           ) : (
@@ -235,7 +293,7 @@ export default function InventoryAlert() {
             <Card>
               <CardContent className="py-8 text-center">
                 <AlertTriangle className="w-12 h-12 mx-auto text-yellow-500 mb-2" />
-                <p className="text-muted-foreground">暂无库存充足的SKU</p>
+                <p className="text-muted-foreground">暂无{categoryTab === 'standard' ? '标准件' : '大件'}库存充足的SKU</p>
               </CardContent>
             </Card>
           ) : (

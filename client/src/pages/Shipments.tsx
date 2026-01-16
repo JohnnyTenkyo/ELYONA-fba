@@ -12,8 +12,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
-import { Plus, Upload, Download, Trash2, ExternalLink, Copy, ChevronDown, Truck, Package, Search } from 'lucide-react';
+import { Plus, Upload, Download, Trash2, ExternalLink, Copy, ChevronDown, ChevronRight, Truck, Package, Search, Calendar, Check } from 'lucide-react';
 import * as XLSX from 'xlsx';
+
+// 辅助函数：格式化日期为字符串
+const formatDate = (date: any): string => {
+  if (!date) return '-';
+  if (typeof date === 'string') return date;
+  if (date instanceof Date) return date.toISOString().split('T')[0];
+  return String(date);
+};
 
 export default function Shipments() {
   const { brandName } = useLocalAuth();
@@ -21,18 +29,18 @@ export default function Shipments() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [viewMode, setViewMode] = useState<'shipment' | 'sku'>('shipment');
-  const [categoryFilter, setCategoryFilter] = useState<'all' | 'standard' | 'oversized'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [markArrivalId, setMarkArrivalId] = useState<number | null>(null);
   const [arrivalDate, setArrivalDate] = useState('');
+  const [editExpectedId, setEditExpectedId] = useState<number | null>(null);
+  const [newExpectedDate, setNewExpectedDate] = useState('');
 
-  // 表单状态
+  // 表单状态 - 移除category字段，通过SKU自动匹配
   const [formData, setFormData] = useState({
     trackingNumber: '',
     warehouse: '',
     shipDate: '',
-    category: 'standard' as 'standard' | 'oversized',
     items: [{ sku: '', quantity: 0 }],
   });
 
@@ -84,6 +92,17 @@ export default function Shipments() {
     onError: (error) => toast.error(error.message),
   });
 
+  const updateExpectedMutation = trpc.shipment.updateExpectedDate.useMutation({
+    onSuccess: (data) => {
+      const statusText = data.status === 'early' ? '提前到达' : data.status === 'delayed' ? '延迟到达' : '运输中';
+      toast.success(`预计到货日期已更新，状态：${statusText}`);
+      setEditExpectedId(null);
+      setNewExpectedDate('');
+      utils.shipment.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const batchImportMutation = trpc.shipment.batchImport.useMutation({
     onSuccess: (data) => {
       toast.success(`成功导入 ${data.count} 个货件`);
@@ -97,7 +116,6 @@ export default function Shipments() {
       trackingNumber: '',
       warehouse: '',
       shipDate: '',
-      category: 'standard',
       items: [{ sku: '', quantity: 0 }],
     });
   };
@@ -111,6 +129,14 @@ export default function Shipments() {
       toast.error('请填写完整的SKU和数量');
       return;
     }
+
+    // 根据SKU自动确定类别
+    const skuCategories = formData.items.map(item => {
+      const skuRecord = skus?.find(s => s.sku === item.sku);
+      return skuRecord?.category || 'standard';
+    });
+    // 如果有任何大件，整个货件按大件处理
+    const category = skuCategories.includes('oversized') ? 'oversized' : 'standard';
 
     const items = formData.items.map(item => {
       const skuRecord = skus?.find(s => s.sku === item.sku);
@@ -126,15 +152,16 @@ export default function Shipments() {
       trackingNumber: formData.trackingNumber,
       warehouse: formData.warehouse,
       shipDate: formData.shipDate || undefined,
-      category: formData.category,
+      category,
       items,
     });
   };
 
+  // 下载模板 - 移除类别字段
   const handleDownloadTemplate = () => {
     const template = [
-      { SKU: 'SKU001', '货运号': 'FBA123456', '到达仓库': 'PHX6', '发货数量': 100, '发货日期': '2026-01-15', '类别': '标准件' },
-      { SKU: 'SKU002', '货运号': 'FBA123456', '到达仓库': 'PHX6', '发货数量': 50, '发货日期': '2026-01-15', '类别': '标准件' },
+      { SKU: 'SKU001', '货运号': 'FBA123456', '到达仓库': 'PHX6', '发货数量': 100, '发货日期': '2026-01-15' },
+      { SKU: 'SKU002', '货运号': 'FBA123456', '到达仓库': 'PHX6', '发货数量': 50, '发货日期': '2026-01-15' },
     ];
     const ws = XLSX.utils.json_to_sheet(template);
     const wb = XLSX.utils.book_new();
@@ -142,6 +169,7 @@ export default function Shipments() {
     XLSX.writeFile(wb, '货件导入模板.xlsx');
   };
 
+  // 导入处理 - 移除类别字段，通过SKU自动匹配
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -158,26 +186,22 @@ export default function Shipments() {
         // 辅助函数：将Excel日期数字转换为日期字符串
         const excelDateToString = (excelDate: any): string => {
           if (!excelDate) return '';
-          // 如果已经是字符串，直接返回
           if (typeof excelDate === 'string') return excelDate;
-          // 如果是数字（Excel日期序列号），转换为日期
           if (typeof excelDate === 'number') {
-            // Excel日期序列号从1900年1月1日开始（序列号1）
-            // 但Excel有一个bug，认为1900年是闰年，所以需要减去1天（对于1900年3月1日之后的日期）
-            const excelEpoch = new Date(1899, 11, 30); // 1899年12月30日
+            const excelEpoch = new Date(1899, 11, 30);
             const date = new Date(excelEpoch.getTime() + excelDate * 24 * 60 * 60 * 1000);
-            return date.toISOString().split('T')[0]; // 返回 YYYY-MM-DD 格式
+            return date.toISOString().split('T')[0];
           }
           return String(excelDate);
         };
 
+        // 移除category字段，通过SKU自动匹配
         const items = jsonData.map((row: any) => ({
           sku: String(row['SKU'] || row['sku'] || ''),
           trackingNumber: String(row['货运号'] || row['trackingNumber'] || ''),
           warehouse: String(row['到达仓库'] || row['warehouse'] || ''),
           quantity: parseInt(row['发货数量'] || row['quantity'] || '0') || 0,
           shipDate: excelDateToString(row['发货日期'] || row['shipDate']),
-          category: (row['类别'] === '大件' || row['category'] === 'oversized') ? 'oversized' as const : 'standard' as const,
         })).filter((item: { sku: string; trackingNumber: string }) => item.sku && item.trackingNumber);
 
         if (items.length === 0) {
@@ -202,13 +226,13 @@ export default function Shipments() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'shipping':
-        return <Badge className="bg-blue-500">运输中</Badge>;
+        return <Badge className="bg-blue-500 hover:bg-blue-600">运输中</Badge>;
       case 'arrived':
-        return <Badge className="bg-gray-500">已到达</Badge>;
+        return <Badge className="bg-gray-500 hover:bg-gray-600">已到达</Badge>;
       case 'early':
-        return <Badge className="bg-green-500">提前到达</Badge>;
+        return <Badge className="bg-green-500 hover:bg-green-600">提前到达</Badge>;
       case 'delayed':
-        return <Badge className="bg-red-500">延迟到达</Badge>;
+        return <Badge className="bg-red-500 hover:bg-red-600">延迟到达</Badge>;
       default:
         return <Badge variant="outline">未知</Badge>;
     }
@@ -216,19 +240,13 @@ export default function Shipments() {
 
   // 过滤货件
   const filteredShipments = shipments?.filter(s => {
-    if (categoryFilter !== 'all' && s.category !== categoryFilter) return false;
     if (searchTerm && !s.trackingNumber.toLowerCase().includes(searchTerm.toLowerCase())) return false;
     return true;
   }) || [];
 
-  // 按SKU分组的视图数据
-  const skuGroupedData = () => {
-    if (!shipments) return [];
-    const skuMap = new Map<string, { sku: string; category: string; totalQuantity: number; shipments: any[] }>();
-    
-    // 这里需要获取每个货件的items
-    // 暂时使用简化逻辑
-    return Array.from(skuMap.values());
+  // 计算货件总数量
+  const calculateShipmentTotal = (shipmentId: number, items: any[]) => {
+    return items.reduce((sum, item) => sum + (item.quantity || 0), 0);
   };
 
   return (
@@ -274,16 +292,6 @@ export default function Shipments() {
               className="pl-10 w-64"
             />
           </div>
-          <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v as any)}>
-            <SelectTrigger className="w-32">
-              <SelectValue placeholder="类别" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部</SelectItem>
-              <SelectItem value="standard">标准件</SelectItem>
-              <SelectItem value="oversized">大件</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
 
         <div className="flex items-center gap-2">
@@ -336,33 +344,17 @@ export default function Shipments() {
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>发货日期</Label>
-                    <Input
-                      type="date"
-                      value={formData.shipDate}
-                      onChange={(e) => setFormData({ ...formData, shipDate: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>类别</Label>
-                    <Select
-                      value={formData.category}
-                      onValueChange={(v) => setFormData({ ...formData, category: v as any })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="standard">标准件</SelectItem>
-                        <SelectItem value="oversized">大件</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="space-y-2">
+                  <Label>发货日期</Label>
+                  <Input
+                    type="date"
+                    value={formData.shipDate}
+                    onChange={(e) => setFormData({ ...formData, shipDate: e.target.value })}
+                    className="w-48"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label>SKU明细</Label>
+                  <Label>SKU明细（类别将根据SKU自动匹配）</Label>
                   {formData.items.map((item, index) => (
                     <div key={index} className="flex gap-2">
                       <Select
@@ -378,7 +370,9 @@ export default function Shipments() {
                         </SelectTrigger>
                         <SelectContent>
                           {skus?.map(s => (
-                            <SelectItem key={s.id} value={s.sku}>{s.sku}</SelectItem>
+                            <SelectItem key={s.id} value={s.sku}>
+                              {s.sku} ({s.category === 'oversized' ? '大件' : '标准件'})
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -455,14 +449,24 @@ export default function Shipments() {
 
       {/* 货件列表 - 货件视图 */}
       {viewMode === 'shipment' && (
-        <div className="space-y-4">
-          {/* 标准件 */}
-          {(categoryFilter === 'all' || categoryFilter === 'standard') && (
+        <Tabs defaultValue="standard">
+          <TabsList className="mb-4">
+            <TabsTrigger value="standard" className="flex items-center gap-2">
+              <Package className="w-4 h-4" />
+              标准件
+            </TabsTrigger>
+            <TabsTrigger value="oversized" className="flex items-center gap-2">
+              <Truck className="w-4 h-4" />
+              大件
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="standard">
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Package className="w-5 h-5 text-blue-500" />
-                  标准件货件
+                  标准件货件 ({filteredShipments.filter(s => s.category === 'standard').length}个)
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -481,6 +485,10 @@ export default function Shipments() {
                           setMarkArrivalId(id);
                           setArrivalDate(new Date().toISOString().split('T')[0]);
                         }}
+                        onEditExpected={(id, currentDate) => {
+                          setEditExpectedId(id);
+                          setNewExpectedDate(formatDate(currentDate));
+                        }}
                         onDelete={(id) => deleteMutation.mutate({ id })}
                         getStatusBadge={getStatusBadge}
                       />
@@ -489,15 +497,14 @@ export default function Shipments() {
                 )}
               </CardContent>
             </Card>
-          )}
-
-          {/* 大件 */}
-          {(categoryFilter === 'all' || categoryFilter === 'oversized') && (
+          </TabsContent>
+          
+          <TabsContent value="oversized">
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Truck className="w-5 h-5 text-orange-500" />
-                  大件货件
+                  大件货件 ({filteredShipments.filter(s => s.category === 'oversized').length}个)
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -516,6 +523,10 @@ export default function Shipments() {
                           setMarkArrivalId(id);
                           setArrivalDate(new Date().toISOString().split('T')[0]);
                         }}
+                        onEditExpected={(id, currentDate) => {
+                          setEditExpectedId(id);
+                          setNewExpectedDate(formatDate(currentDate));
+                        }}
                         onDelete={(id) => deleteMutation.mutate({ id })}
                         getStatusBadge={getStatusBadge}
                       />
@@ -524,26 +535,20 @@ export default function Shipments() {
                 )}
               </CardContent>
             </Card>
-          )}
-        </div>
+          </TabsContent>
+        </Tabs>
       )}
 
       {/* SKU视图 */}
       {viewMode === 'sku' && (
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-center py-8 text-muted-foreground">
-              SKU视图功能开发中...
-            </p>
-          </CardContent>
-        </Card>
+        <SkuView shipments={filteredShipments} skus={skus || []} onCopy={copyToClipboard} />
       )}
 
       {/* 标记到达对话框 */}
       <Dialog open={markArrivalId !== null} onOpenChange={(open) => !open && setMarkArrivalId(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>标记货件到达</DialogTitle>
+            <DialogTitle>确认货件到达</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -570,19 +575,64 @@ export default function Shipments() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 修改预计到货日期对话框 */}
+      <Dialog open={editExpectedId !== null} onOpenChange={(open) => !open && setEditExpectedId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>修改预计到货日期</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              修改预计到货日期后，系统将自动判断是提前到达还是延迟到达，并更新状态标签。
+            </p>
+            <div className="space-y-2">
+              <Label>新的预计到货日期</Label>
+              <Input
+                type="date"
+                value={newExpectedDate}
+                onChange={(e) => setNewExpectedDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditExpectedId(null)}>取消</Button>
+            <Button
+              onClick={() => {
+                if (editExpectedId && newExpectedDate) {
+                  updateExpectedMutation.mutate({ id: editExpectedId, expectedArrivalDate: newExpectedDate });
+                }
+              }}
+              disabled={updateExpectedMutation.isPending}
+            >
+              {updateExpectedMutation.isPending ? '更新中...' : '更新'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 // 货件卡片组件
-function ShipmentCard({ shipment, onCopy, onMarkArrival, onDelete, getStatusBadge }: {
+function ShipmentCard({ shipment, onCopy, onMarkArrival, onEditExpected, onDelete, getStatusBadge }: {
   shipment: any;
   onCopy: (text: string) => void;
   onMarkArrival: (id: number) => void;
+  onEditExpected: (id: number, currentDate: any) => void;
   onDelete: (id: number) => void;
   getStatusBadge: (status: string) => React.ReactNode;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  
+  // 获取货件明细
+  const { data: items, isLoading } = trpc.shipment.getItems.useQuery(
+    { shipmentId: shipment.id },
+    { enabled: isOpen }
+  );
+
+  // 计算总数量
+  const totalQuantity = items?.reduce((sum, item) => sum + (item.quantity || 0), 0) || 0;
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -605,21 +655,37 @@ function ShipmentCard({ shipment, onCopy, onMarkArrival, onDelete, getStatusBadg
                 <Button variant="ghost" size="sm" onClick={() => onCopy(shipment.trackingNumber)}>
                   <Copy className="w-3 h-3" />
                 </Button>
+                <Badge variant="outline" className="ml-2">
+                  共 {totalQuantity || '...'} 件
+                </Badge>
               </div>
               <div className="text-sm text-muted-foreground">
                 {shipment.warehouse && <span>仓库: {shipment.warehouse}</span>}
-                {shipment.shipDate && <span className="ml-4">发货: {shipment.shipDate}</span>}
+                {shipment.shipDate && <span className="ml-4">发货: {formatDate(shipment.shipDate)}</span>}
               </div>
             </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right text-sm">
-              <p>预计到货: {shipment.expectedArrivalDate || '-'}</p>
-              {shipment.actualArrivalDate && <p>实际到货: {shipment.actualArrivalDate}</p>}
+              <p className="flex items-center gap-1">
+                预计到货: {formatDate(shipment.expectedArrivalDate)}
+                {shipment.status === 'shipping' && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-6 px-1"
+                    onClick={() => onEditExpected(shipment.id, shipment.expectedArrivalDate)}
+                  >
+                    <Calendar className="w-3 h-3" />
+                  </Button>
+                )}
+              </p>
+              {shipment.actualArrivalDate && <p>实际到货: {formatDate(shipment.actualArrivalDate)}</p>}
             </div>
             {getStatusBadge(shipment.status)}
             {shipment.status === 'shipping' && (
               <Button variant="outline" size="sm" onClick={() => onMarkArrival(shipment.id)}>
+                <Check className="w-4 h-4 mr-1" />
                 确认到达
               </Button>
             )}
@@ -651,10 +717,246 @@ function ShipmentCard({ shipment, onCopy, onMarkArrival, onDelete, getStatusBadg
         </div>
         <CollapsibleContent>
           <div className="mt-4 pt-4 border-t">
-            <p className="text-sm text-muted-foreground">货件明细加载中...</p>
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground">加载中...</p>
+            ) : items && items.length > 0 ? (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left p-2">SKU</th>
+                    <th className="text-right p-2">数量</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item, index) => (
+                    <tr key={index} className="border-b last:border-0 hover:bg-muted/50">
+                      <td className="p-2">{item.sku}</td>
+                      <td className="p-2 text-right">{item.quantity}</td>
+                    </tr>
+                  ))}
+                  <tr className="font-medium bg-muted/30">
+                    <td className="p-2">合计</td>
+                    <td className="p-2 text-right">{totalQuantity}</td>
+                  </tr>
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-sm text-muted-foreground">暂无明细</p>
+            )}
           </div>
         </CollapsibleContent>
       </div>
     </Collapsible>
+  );
+}
+
+// SKU视图组件
+function SkuView({ shipments, skus, onCopy }: { shipments: any[]; skus: any[]; onCopy: (text: string) => void }) {
+  const [expandedSku, setExpandedSku] = useState<number | null>(null);
+  
+  // 获取所有运输中的货件
+  const shippingShipments = shipments.filter(s => s.status === 'shipping');
+
+  return (
+    <Tabs defaultValue="standard">
+      <TabsList className="mb-4">
+        <TabsTrigger value="standard" className="flex items-center gap-2">
+          <Package className="w-4 h-4" />
+          标准件
+        </TabsTrigger>
+        <TabsTrigger value="oversized" className="flex items-center gap-2">
+          <Truck className="w-4 h-4" />
+          大件
+        </TabsTrigger>
+      </TabsList>
+      
+      <TabsContent value="standard">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Package className="w-5 h-5 text-blue-500" />
+              标准件SKU在途情况
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SkuTable 
+              skus={skus.filter(s => s.category === 'standard' && !s.isDiscontinued)} 
+              shipments={shippingShipments}
+              expandedSku={expandedSku}
+              setExpandedSku={setExpandedSku}
+              onCopy={onCopy}
+            />
+          </CardContent>
+        </Card>
+      </TabsContent>
+      
+      <TabsContent value="oversized">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Truck className="w-5 h-5 text-orange-500" />
+              大件SKU在途情况
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SkuTable 
+              skus={skus.filter(s => s.category === 'oversized' && !s.isDiscontinued)} 
+              shipments={shippingShipments}
+              expandedSku={expandedSku}
+              setExpandedSku={setExpandedSku}
+              onCopy={onCopy}
+            />
+          </CardContent>
+        </Card>
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+// SKU表格组件
+function SkuTable({ skus, shipments, expandedSku, setExpandedSku, onCopy }: {
+  skus: any[];
+  shipments: any[];
+  expandedSku: number | null;
+  setExpandedSku: (id: number | null) => void;
+  onCopy: (text: string) => void;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/50">
+            <th className="text-left p-2 w-8"></th>
+            <th className="text-left p-2">SKU</th>
+            <th className="text-right p-2">在途总量</th>
+            <th className="text-right p-2">FBA库存</th>
+            <th className="text-right p-2">日销量</th>
+          </tr>
+        </thead>
+        <tbody>
+          {skus.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="text-center py-8 text-muted-foreground">
+                暂无数据
+              </td>
+            </tr>
+          ) : (
+            skus.map(sku => (
+              <SkuRow 
+                key={sku.id} 
+                sku={sku} 
+                isExpanded={expandedSku === sku.id}
+                onToggle={() => setExpandedSku(expandedSku === sku.id ? null : sku.id)}
+                onCopy={onCopy}
+              />
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// SKU行组件
+function SkuRow({ sku, isExpanded, onToggle, onCopy }: {
+  sku: any;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onCopy: (text: string) => void;
+}) {
+  // 获取该SKU的在途货件
+  const { data: shipmentItems, isLoading } = trpc.shipment.getBySkuId.useQuery(
+    { skuId: sku.id },
+    { enabled: isExpanded }
+  );
+
+  const inTransitTotal = sku.inTransitStock || 0;
+
+  return (
+    <>
+      <tr className="border-b hover:bg-muted/50">
+        <td className="p-2">
+          {inTransitTotal > 0 && (
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={onToggle}>
+              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            </Button>
+          )}
+        </td>
+        <td className="p-2 font-medium">{sku.sku}</td>
+        <td className="p-2 text-right">
+          <span className={inTransitTotal > 0 ? 'text-blue-600 font-medium' : ''}>
+            {inTransitTotal}
+          </span>
+        </td>
+        <td className="p-2 text-right">{sku.fbaStock || 0}</td>
+        <td className="p-2 text-right">{sku.dailySales || 0}</td>
+      </tr>
+      {isExpanded && (
+        <tr>
+          <td colSpan={5} className="p-0">
+            <div className="bg-muted/30 p-4 border-b">
+              {isLoading ? (
+                <p className="text-sm text-muted-foreground">加载中...</p>
+              ) : shipmentItems && shipmentItems.length > 0 ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left p-2">货运号</th>
+                      <th className="text-right p-2">数量</th>
+                      <th className="text-left p-2">预计到货</th>
+                      <th className="text-left p-2">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shipmentItems.map((item: any, index: number) => (
+                      <tr key={index} className="border-b last:border-0">
+                        <td className="p-2">
+                          <span 
+                            className="cursor-pointer hover:text-primary"
+                            onClick={() => onCopy(item.shipment?.trackingNumber || '')}
+                          >
+                            {item.shipment?.trackingNumber || '-'}
+                          </span>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-6 px-1 ml-1"
+                            onClick={() => onCopy(item.shipment?.trackingNumber || '')}
+                          >
+                            <Copy className="w-3 h-3" />
+                          </Button>
+                        </td>
+                        <td className="p-2 text-right">{item.item?.quantity || 0}</td>
+                        <td className="p-2">
+                          {item.shipment?.expectedArrivalDate 
+                            ? formatDate(item.shipment.expectedArrivalDate)
+                            : '-'}
+                        </td>
+                        <td className="p-2">
+                          {item.shipment?.status === 'shipping' && (
+                            <Badge className="bg-blue-500">运输中</Badge>
+                          )}
+                          {item.shipment?.status === 'early' && (
+                            <Badge className="bg-green-500">提前到达</Badge>
+                          )}
+                          {item.shipment?.status === 'delayed' && (
+                            <Badge className="bg-red-500">延迟到达</Badge>
+                          )}
+                          {item.shipment?.status === 'arrived' && (
+                            <Badge className="bg-gray-500">已到达</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-sm text-muted-foreground">暂无在途货件</p>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

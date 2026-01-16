@@ -1,4 +1,4 @@
-import { useLocalAuth } from '@/contexts/AuthContext';
+import { useLocalAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -19,6 +19,9 @@ import {
   SidebarProvider,
   SidebarTrigger,
   useSidebar,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarGroupContent,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
 import { 
@@ -33,22 +36,29 @@ import {
   Calendar,
   Gift,
   FileSpreadsheet,
-  Factory
+  Factory,
+  ChevronDown
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation, Redirect } from "wouter";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
-const menuItems = [
+// 主导航菜单
+const mainMenuItems = [
   { icon: LayoutDashboard, label: "概览", path: "/" },
   { icon: Package, label: "SKU管理", path: "/sku" },
   { icon: RefreshCw, label: "FBA库存同步", path: "/sync" },
-  { icon: AlertTriangle, label: "库存预警", path: "/alerts" },
-  { icon: Settings, label: "运输配置", path: "/transport" },
   { icon: Truck, label: "货件详情", path: "/shipments" },
-  { icon: Gift, label: "促销项目", path: "/promotions" },
   { icon: FileSpreadsheet, label: "发货计划", path: "/shipping-plan" },
-  { icon: Calendar, label: "春节配置", path: "/spring-festival" },
   { icon: Factory, label: "工厂备货", path: "/factory-plan" },
+  { icon: AlertTriangle, label: "库存预警", path: "/alerts" },
+];
+
+// 额外配置菜单
+const configMenuItems = [
+  { icon: Gift, label: "促销项目", path: "/promotions" },
+  { icon: Settings, label: "运输配置", path: "/transport" },
+  { icon: Calendar, label: "春节配置", path: "/spring-festival" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "fba-sidebar-width";
@@ -112,8 +122,10 @@ function AppLayoutContent({
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
+  const [configOpen, setConfigOpen] = useState(true);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const activeMenuItem = menuItems.find(item => item.path === location);
+  const allMenuItems = [...mainMenuItems, ...configMenuItems];
+  const activeMenuItem = allMenuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -186,95 +198,143 @@ function AppLayoutContent({
           </SidebarHeader>
 
           <SidebarContent className="gap-0">
-            <SidebarMenu className="px-2 py-1">
-              {menuItems.map(item => {
-                const isActive = location === item.path;
-                return (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => setLocation(item.path)}
-                      tooltip={item.label}
-                      className={`h-10 transition-all font-normal`}
-                    >
-                      <item.icon
-                        className={`h-4 w-4 ${isActive ? "text-primary" : ""}`}
-                      />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+            {/* 主导航 */}
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <SidebarMenu className="px-2 py-1">
+                  {mainMenuItems.map(item => {
+                    const isActive = location === item.path;
+                    return (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => setLocation(item.path)}
+                          tooltip={item.label}
+                          className={`h-10 transition-all font-normal`}
+                        >
+                          <item.icon
+                            className={`h-4 w-4 shrink-0 ${
+                              isActive
+                                ? "text-primary"
+                                : "text-muted-foreground"
+                            }`}
+                          />
+                          <span className="truncate">{item.label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+
+            {/* 额外配置 */}
+            <SidebarGroup>
+              <Collapsible open={configOpen} onOpenChange={setConfigOpen}>
+                {!isCollapsed && (
+                  <CollapsibleTrigger asChild>
+                    <SidebarGroupLabel className="cursor-pointer hover:bg-accent/50 rounded-md px-2 py-1.5 flex items-center justify-between">
+                      <span>额外配置</span>
+                      <ChevronDown className={`h-4 w-4 transition-transform ${configOpen ? '' : '-rotate-90'}`} />
+                    </SidebarGroupLabel>
+                  </CollapsibleTrigger>
+                )}
+                <CollapsibleContent>
+                  <SidebarGroupContent>
+                    <SidebarMenu className="px-2 py-1">
+                      {configMenuItems.map(item => {
+                        const isActive = location === item.path;
+                        return (
+                          <SidebarMenuItem key={item.path}>
+                            <SidebarMenuButton
+                              isActive={isActive}
+                              onClick={() => setLocation(item.path)}
+                              tooltip={item.label}
+                              className={`h-10 transition-all font-normal`}
+                            >
+                              <item.icon
+                                className={`h-4 w-4 shrink-0 ${
+                                  isActive
+                                    ? "text-primary"
+                                    : "text-muted-foreground"
+                                }`}
+                              />
+                              <span className="truncate">{item.label}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      })}
+                    </SidebarMenu>
+                  </SidebarGroupContent>
+                </CollapsibleContent>
+              </Collapsible>
+            </SidebarGroup>
           </SidebarContent>
 
-          <SidebarFooter className="p-3">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  <Avatar className="h-9 w-9 border shrink-0 bg-primary">
-                    <AvatarFallback className="text-xs font-medium bg-primary text-primary-foreground">
-                      {brandName?.charAt(0).toUpperCase() || 'U'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
-                    <p className="text-sm font-medium truncate leading-none">
-                      {user?.username || "-"}
-                    </p>
-                    <p className="text-xs text-muted-foreground truncate mt-1.5">
-                      {brandName || "-"}
-                    </p>
-                  </div>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <div className="px-2 py-1.5 text-sm">
-                  <p className="font-medium">{user?.username}</p>
-                  <p className="text-xs text-muted-foreground">品牌: {brandName}</p>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={handleLogout}
-                  className="cursor-pointer text-destructive focus:text-destructive"
-                >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>退出登录</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+          <SidebarFooter className="border-t">
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <SidebarMenuButton
+                      className="h-12 data-[state=open]:bg-accent"
+                      tooltip={brandName || user?.name || "用户"}
+                    >
+                      <Avatar className="h-7 w-7 shrink-0">
+                        <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                          {(brandName || user?.name || "U").charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      {!isCollapsed && (
+                        <div className="flex flex-col items-start min-w-0">
+                          <span className="text-sm font-medium truncate max-w-[140px]">
+                            {brandName || user?.name || "用户"}
+                          </span>
+                          <span className="text-xs text-muted-foreground truncate max-w-[140px]">
+                            {brandName ? '品牌账户' : ''}
+                          </span>
+                        </div>
+                      )}
+                    </SidebarMenuButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    side="top"
+                    align="start"
+                    className="w-56"
+                  >
+                    <div className="px-2 py-1.5">
+                      <p className="text-sm font-medium">{brandName || user?.name || "用户"}</p>
+                      <p className="text-xs text-muted-foreground">品牌: {brandName || '-'}</p>
+                    </div>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleLogout} className="text-destructive">
+                      <LogOut className="mr-2 h-4 w-4" />
+                      退出登录
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </SidebarMenuItem>
+            </SidebarMenu>
           </SidebarFooter>
+
+          {/* Resize handle */}
+          {!isCollapsed && (
+            <div
+              className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/20 transition-colors z-50"
+              onMouseDown={() => setIsResizing(true)}
+            />
+          )}
         </Sidebar>
-        <div
-          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/20 transition-colors ${isCollapsed ? "hidden" : ""}`}
-          onMouseDown={() => {
-            if (isCollapsed) return;
-            setIsResizing(true);
-          }}
-          style={{ zIndex: 50 }}
-        />
       </div>
 
-      <SidebarInset>
-        {isMobile && (
-          <div className="flex border-b h-14 items-center justify-between bg-background/95 px-2 backdrop-blur supports-[backdrop-filter]:backdrop-blur sticky top-0 z-40">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger className="h-9 w-9 rounded-lg bg-background" />
-              <div className="flex items-center gap-3">
-                <div className="flex flex-col gap-1">
-                  <span className="tracking-tight text-foreground">
-                    {activeMenuItem?.label ?? "菜单"}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        <main className="flex-1 p-4 md:p-6">
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold">{activeMenuItem?.label || '概览'}</h1>
-          </div>
-          {children}
-        </main>
+      <SidebarInset className="flex flex-col">
+        <header className="sticky top-0 z-10 flex h-16 items-center gap-4 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
+          {isMobile && <SidebarTrigger />}
+          <h1 className="text-lg font-semibold">
+            {activeMenuItem?.label || "FBA管理系统"}
+          </h1>
+        </header>
+        <main className="flex-1 overflow-auto p-6">{children}</main>
       </SidebarInset>
     </>
   );
