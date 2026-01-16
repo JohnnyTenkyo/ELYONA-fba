@@ -155,12 +155,28 @@ export default function Shipments() {
         const worksheet = workbook.Sheets[sheetName];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
+        // 辅助函数：将Excel日期数字转换为日期字符串
+        const excelDateToString = (excelDate: any): string => {
+          if (!excelDate) return '';
+          // 如果已经是字符串，直接返回
+          if (typeof excelDate === 'string') return excelDate;
+          // 如果是数字（Excel日期序列号），转换为日期
+          if (typeof excelDate === 'number') {
+            // Excel日期序列号从1900年1月1日开始（序列号1）
+            // 但Excel有一个bug，认为1900年是闰年，所以需要减去1天（对于1900年3月1日之后的日期）
+            const excelEpoch = new Date(1899, 11, 30); // 1899年12月30日
+            const date = new Date(excelEpoch.getTime() + excelDate * 24 * 60 * 60 * 1000);
+            return date.toISOString().split('T')[0]; // 返回 YYYY-MM-DD 格式
+          }
+          return String(excelDate);
+        };
+
         const items = jsonData.map((row: any) => ({
-          sku: row['SKU'] || row['sku'] || '',
-          trackingNumber: row['货运号'] || row['trackingNumber'] || '',
-          warehouse: row['到达仓库'] || row['warehouse'] || '',
+          sku: String(row['SKU'] || row['sku'] || ''),
+          trackingNumber: String(row['货运号'] || row['trackingNumber'] || ''),
+          warehouse: String(row['到达仓库'] || row['warehouse'] || ''),
           quantity: parseInt(row['发货数量'] || row['quantity'] || '0') || 0,
-          shipDate: row['发货日期'] || row['shipDate'] || '',
+          shipDate: excelDateToString(row['发货日期'] || row['shipDate']),
           category: (row['类别'] === '大件' || row['category'] === 'oversized') ? 'oversized' as const : 'standard' as const,
         })).filter((item: { sku: string; trackingNumber: string }) => item.sku && item.trackingNumber);
 
