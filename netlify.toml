@@ -8,9 +8,10 @@
   NPM_FLAGS = "--legacy-peer-deps"
 
 [[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
+  from = "/api/trpc/*"
+  to = "/.netlify/functions/trpc"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/*"
