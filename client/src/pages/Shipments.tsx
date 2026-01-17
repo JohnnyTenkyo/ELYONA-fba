@@ -682,8 +682,8 @@ function ShipmentCard({ shipment, onCopy, onMarkArrival, onEditExpected, onUndoA
                 <Button variant="ghost" size="sm" onClick={() => onCopy(shipment.trackingNumber)}>
                   <Copy className="w-3 h-3" />
                 </Button>
-                <Badge variant="outline" className="ml-2 whitespace-nowrap">
-                  共 {totalQuantity || '...'} 件
+                <Badge variant="outline" className="ml-2 whitespace-nowrap text-base font-semibold px-3 py-1">
+                  共 {isOpen ? totalQuantity : '...'} 件
                 </Badge>
               </div>
               <div className="text-sm text-muted-foreground">
@@ -693,20 +693,21 @@ function ShipmentCard({ shipment, onCopy, onMarkArrival, onEditExpected, onUndoA
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="text-right text-sm">
-              <p className="flex items-center gap-1">
+            <div className="text-right">
+              <p className="flex items-center gap-1 text-base font-semibold text-blue-600">
+                <Calendar className="w-4 h-4" />
                 预计到货: {formatDate(shipment.expectedArrivalDate)}
                 {/* 预计到货时间始终可修改 */}
                 <Button 
                   variant="ghost" 
                   size="sm" 
-                  className="h-6 px-1"
+                  className="h-7 px-2"
                   onClick={() => onEditExpected(shipment.id, shipment.expectedArrivalDate)}
                 >
-                  <Calendar className="w-3 h-3" />
+                  修改
                 </Button>
               </p>
-              {shipment.actualArrivalDate && <p>实际到货: {formatDate(shipment.actualArrivalDate)}</p>}
+              {shipment.actualArrivalDate && <p className="text-sm text-green-600 font-medium mt-1">实际到货: {formatDate(shipment.actualArrivalDate)}</p>}
             </div>
             {getStatusBadge(shipment.status)}
             {/* 确认到达按钮始终存在（未到达时显示） */}
@@ -907,12 +908,12 @@ function SkuTable({ skus, shipments, expandedSku, setExpandedSku, onCopy }: {
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-base">
+      <table className="w-full">
         <thead>
-          <tr className="border-b bg-muted/50">
-            <th className="text-left p-3 w-10"></th>
-            <th className="text-left p-3 text-base font-semibold">SKU</th>
-            <th className="text-right p-3 text-base font-semibold">在途总量</th>
+          <tr className="border-b-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+            <th className="text-center p-4 w-16"></th>
+            <th className="text-center p-4 text-lg font-bold text-gray-800">SKU</th>
+            <th className="text-center p-4 text-lg font-bold text-blue-600">在途总量</th>
           </tr>
         </thead>
         <tbody>
@@ -956,17 +957,19 @@ function SkuRow({ sku, isExpanded, onToggle, onCopy }: {
 
   return (
     <>
-      <tr className="border-b hover:bg-muted/50">
-        <td className="p-3">
+      <tr className="border-b hover:bg-blue-50 transition-colors">
+        <td className="p-4 text-center">
           {inTransitTotal > 0 && (
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onToggle}>
-              {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+            <Button variant="ghost" size="sm" className="h-10 w-10 p-0 hover:bg-blue-100" onClick={onToggle}>
+              {isExpanded ? <ChevronDown className="w-6 h-6 text-blue-600" /> : <ChevronRight className="w-6 h-6 text-blue-600" />}
             </Button>
           )}
         </td>
-        <td className="p-3 font-medium text-base">{sku.sku}</td>
-        <td className="p-3 text-right">
-          <span className={`text-base ${inTransitTotal > 0 ? 'text-blue-600 font-semibold' : ''}`}>
+        <td className="p-4 text-center">
+          <span className="text-lg font-bold text-gray-800">{sku.sku}</span>
+        </td>
+        <td className="p-4 text-center">
+          <span className="text-xl font-extrabold text-blue-600 bg-blue-50 px-4 py-2 rounded-lg inline-block">
             {inTransitTotal}
           </span>
         </td>
@@ -974,64 +977,70 @@ function SkuRow({ sku, isExpanded, onToggle, onCopy }: {
       {isExpanded && (
         <tr>
           <td colSpan={3} className="p-0">
-            <div className="bg-muted/30 p-4 border-b">
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 border-l-4 border-blue-400">
               {isLoading ? (
-                <p className="text-sm text-muted-foreground">加载中...</p>
+                <p className="text-center text-base text-muted-foreground">加载中...</p>
               ) : shipmentItems && shipmentItems.length > 0 ? (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left p-2">货运号</th>
-                      <th className="text-right p-2">数量</th>
-                      <th className="text-left p-2">预计到货</th>
-                      <th className="text-left p-2">状态</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {shipmentItems.map((item: any, index: number) => (
-                      <tr key={index} className="border-b last:border-0">
-                        <td className="p-2">
-                          <span 
-                            className="cursor-pointer hover:text-primary"
-                            onClick={() => onCopy(item.shipment?.trackingNumber || '')}
-                          >
-                            {item.shipment?.trackingNumber || '-'}
-                          </span>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-6 px-1 ml-1"
-                            onClick={() => onCopy(item.shipment?.trackingNumber || '')}
-                          >
-                            <Copy className="w-3 h-3" />
-                          </Button>
-                        </td>
-                        <td className="p-2 text-right">{item.item?.quantity || 0}</td>
-                        <td className="p-2">
-                          {item.shipment?.expectedArrivalDate 
-                            ? formatDate(item.shipment.expectedArrivalDate)
-                            : '-'}
-                        </td>
-                        <td className="p-2">
-                          {item.shipment?.status === 'shipping' && (
-                            <Badge className="bg-blue-500">运输中</Badge>
-                          )}
-                          {item.shipment?.status === 'early' && (
-                            <Badge className="bg-green-500">提前到达</Badge>
-                          )}
-                          {item.shipment?.status === 'delayed' && (
-                            <Badge className="bg-red-500">延迟到达</Badge>
-                          )}
-                          {item.shipment?.status === 'arrived' && (
-                            <Badge className="bg-gray-500">已到达</Badge>
-                          )}
-                        </td>
+                <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-200">
+                        <th className="text-center p-3 text-base font-bold text-gray-700">货运号</th>
+                        <th className="text-center p-3 text-base font-bold text-gray-700">数量</th>
+                        <th className="text-center p-3 text-base font-bold text-gray-700">预计到货</th>
+                        <th className="text-center p-3 text-base font-bold text-gray-700">状态</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {shipmentItems.map((item: any, index: number) => (
+                        <tr key={index} className="border-b last:border-0 hover:bg-gray-50 transition-colors">
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <span 
+                                className="cursor-pointer hover:text-blue-600 font-medium text-base"
+                                onClick={() => onCopy(item.shipment?.trackingNumber || '')}
+                              >
+                                {item.shipment?.trackingNumber || '-'}
+                              </span>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-7 w-7 p-0 hover:bg-blue-100"
+                                onClick={() => onCopy(item.shipment?.trackingNumber || '')}
+                              >
+                                <Copy className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <span className="text-lg font-bold text-blue-600">{item.item?.quantity || 0}</span>
+                          </td>
+                          <td className="p-3 text-center text-base font-medium">
+                            {item.shipment?.expectedArrivalDate 
+                              ? formatDate(item.shipment.expectedArrivalDate)
+                              : '-'}
+                          </td>
+                          <td className="p-3 text-center">
+                            {item.shipment?.status === 'shipping' && (
+                              <Badge className="bg-blue-500 text-sm px-3 py-1">运输中</Badge>
+                            )}
+                            {item.shipment?.status === 'early' && (
+                              <Badge className="bg-green-500 text-sm px-3 py-1">提前到达</Badge>
+                            )}
+                            {item.shipment?.status === 'delayed' && (
+                              <Badge className="bg-red-500 text-sm px-3 py-1">延迟到达</Badge>
+                            )}
+                            {item.shipment?.status === 'arrived' && (
+                              <Badge className="bg-gray-500 text-sm px-3 py-1">已到达</Badge>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
-                <p className="text-sm text-muted-foreground">暂无在途货件</p>
+                <p className="text-center text-base text-muted-foreground py-4">暂无在途货件</p>
               )}
             </div>
           </td>

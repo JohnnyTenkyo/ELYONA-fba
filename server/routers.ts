@@ -670,6 +670,16 @@ export const appRouter = router({
         await db.upsertSpringFestivalConfig(brandName, year, data as any);
         return { success: true };
       }),
+    
+    clear: publicProcedure
+      .input(z.object({
+        brandName: z.string(),
+        year: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        await db.deleteSpringFestivalConfig(input.brandName, input.year);
+        return { success: true };
+      }),
   }),
 
   // 实际发货记录

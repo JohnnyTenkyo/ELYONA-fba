@@ -69,6 +69,40 @@ export default function ShippingPlan() {
     { enabled: !!brandName }
   );
 
+  // 从数据库加载已保存的实际发货列
+  useEffect(() => {
+    if (savedActualShipments && savedActualShipments.length > 0) {
+      // 按日期和类别分组
+      const columnMap = new Map<string, ActualShipmentColumn>();
+      const quantities: Record<string, Record<string, number>> = {};
+      
+      savedActualShipments.forEach((record: any) => {
+        const sku = skus?.find(s => s.id === record.skuId);
+        if (!sku) return;
+        
+        const columnKey = `${record.shipDate}_${sku.category}`;
+        const columnId = `col_${columnKey}`;
+        
+        if (!columnMap.has(columnKey)) {
+          columnMap.set(columnKey, {
+            id: columnId,
+            date: record.shipDate,
+            remark: record.notes || '',
+            category: sku.category,
+          });
+        }
+        
+        if (!quantities[record.skuId]) {
+          quantities[record.skuId] = {};
+        }
+        quantities[record.skuId][columnId] = record.quantity;
+      });
+      
+      setActualColumns(Array.from(columnMap.values()));
+      setActualQuantities(quantities);
+    }
+  }, [savedActualShipments, skus]);
+
   // 创建实际发货记录的mutation
   const createActualShipmentMutation = trpc.actualShipment.create.useMutation({
     onSuccess: () => {

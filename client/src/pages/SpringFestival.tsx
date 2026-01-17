@@ -50,17 +50,41 @@ export default function SpringFestival() {
 
   const updateMutation = trpc.springFestival.update.useMutation({
     onSuccess: () => {
-      toast.success('春节配置保存成功');
+      toast.success('春节配置保存成功，已同步到发货计划');
+      // 刷新所有相关数据
       utils.springFestival.get.invalidate();
+      utils.shippingPlan.list.invalidate();
+      utils.factoryInventory.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const clearMutation = trpc.springFestival.clear.useMutation({
+    onSuccess: () => {
+      toast.success('春节配置已清空');
+      utils.springFestival.get.invalidate();
+      utils.shippingPlan.list.invalidate();
+      utils.factoryInventory.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
 
   const handleSave = () => {
+    if (!config.holidayStartDate || !config.holidayEndDate) {
+      toast.error('请至少设置放假开始和结束日期');
+      return;
+    }
     updateMutation.mutate({
       brandName,
       year,
       ...config,
+    });
+  };
+
+  const handleClear = () => {
+    clearMutation.mutate({
+      brandName,
+      year,
     });
   };
 
@@ -120,6 +144,10 @@ export default function SpringFestival() {
               max={currentYear + 2}
             />
           </div>
+          <Button variant="outline" onClick={handleClear} disabled={clearMutation.isPending || !savedConfig}>
+            <RefreshCw className="w-4 h-4 mr-1" />
+            {clearMutation.isPending ? '清空中...' : '清空配置'}
+          </Button>
           <Button onClick={handleSave} disabled={updateMutation.isPending}>
             <Save className="w-4 h-4 mr-1" />
             {updateMutation.isPending ? '保存中...' : '保存配置'}

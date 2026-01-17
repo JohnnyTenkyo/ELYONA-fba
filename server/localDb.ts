@@ -64,9 +64,11 @@ interface LocalPromotion {
   id: number;
   brandName: string;
   name: string;
-  startDate: string;
-  endDate: string;
-  status: 'planning' | 'active' | 'completed';
+  lastYearStartDate: string | null;
+  lastYearEndDate: string | null;
+  thisYearStartDate: string | null;
+  thisYearEndDate: string | null;
+  isActive: boolean;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -96,8 +98,11 @@ interface LocalSpringFestivalConfig {
   id: number;
   brandName: string;
   year: number;
-  startDate: string;
-  endDate: string;
+  holidayStartDate: string | null;
+  holidayEndDate: string | null;
+  lastShipDate: string | null;
+  returnToWorkDate: string | null;
+  firstShipDate: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -348,14 +353,16 @@ class LocalDatabase {
     return this.promotions.find(p => p.id === id);
   }
 
-  createPromotion(data: Partial<LocalPromotion> & { brandName: string; name: string; startDate: string; endDate: string }): LocalPromotion {
+  createPromotion(data: Partial<LocalPromotion> & { brandName: string; name: string }): LocalPromotion {
     const promotion: LocalPromotion = {
       id: this.nextPromotionId++,
       brandName: data.brandName,
       name: data.name,
-      startDate: data.startDate,
-      endDate: data.endDate,
-      status: data.status || 'planning',
+      lastYearStartDate: data.lastYearStartDate || null,
+      lastYearEndDate: data.lastYearEndDate || null,
+      thisYearStartDate: data.thisYearStartDate || null,
+      thisYearEndDate: data.thisYearEndDate || null,
+      isActive: data.isActive !== undefined ? data.isActive : true,
       notes: data.notes || null,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -445,25 +452,33 @@ class LocalDatabase {
     return this.springFestivalConfigs.find(c => c.brandName === brandName && c.year === year);
   }
 
-  upsertSpringFestivalConfig(brandName: string, year: number, startDate: string, endDate: string): LocalSpringFestivalConfig {
+  upsertSpringFestivalConfig(brandName: string, year: number, data: Partial<LocalSpringFestivalConfig>): LocalSpringFestivalConfig {
     let config = this.springFestivalConfigs.find(c => c.brandName === brandName && c.year === year);
     if (config) {
-      config.startDate = startDate;
-      config.endDate = endDate;
-      config.updatedAt = new Date();
+      Object.assign(config, data, { updatedAt: new Date() });
     } else {
       config = {
         id: this.nextSpringFestivalConfigId++,
         brandName,
         year,
-        startDate,
-        endDate,
+        holidayStartDate: data.holidayStartDate || null,
+        holidayEndDate: data.holidayEndDate || null,
+        lastShipDate: data.lastShipDate || null,
+        returnToWorkDate: data.returnToWorkDate || null,
+        firstShipDate: data.firstShipDate || null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
       this.springFestivalConfigs.push(config);
     }
     return config;
+  }
+
+  deleteSpringFestivalConfig(brandName: string, year: number): void {
+    const index = this.springFestivalConfigs.findIndex(c => c.brandName === brandName && c.year === year);
+    if (index !== -1) {
+      this.springFestivalConfigs.splice(index, 1);
+    }
   }
 
   // ==================== 发货计划相关 ====================

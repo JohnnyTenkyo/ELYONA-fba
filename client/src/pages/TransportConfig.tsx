@@ -37,8 +37,12 @@ export default function TransportConfig() {
 
   const updateMutation = trpc.transport.update.useMutation({
     onSuccess: () => {
-      toast.success('配置保存成功');
+      toast.success('配置保存成功，已同步到相关表单');
+      // 刷新所有相关数据
       utils.transport.get.invalidate();
+      utils.shipment.list.invalidate();
+      utils.shippingPlan.list.invalidate();
+      utils.factoryInventory.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
