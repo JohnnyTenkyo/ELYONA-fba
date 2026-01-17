@@ -1,0 +1,11 @@
+{
+  "buildCommand": "pnpm build:client",
+  "outputDirectory": "dist/public",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://your-railway-backend.railway.app/api/:path*"
+    }
+  ]
+}
