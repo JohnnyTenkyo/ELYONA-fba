@@ -360,9 +360,18 @@ export async function getShipmentsByBrand(brandName: string) {
   const db = await getDb();
   if (!db) return [];
   
-  return db.select().from(shipments)
+  const shipmentList = await db.select().from(shipments)
     .where(eq(shipments.brandName, brandName))
     .orderBy(desc(shipments.createdAt));
+  
+  // 为每个货件添加总数量字段
+  const shipmentsWithTotal = await Promise.all(shipmentList.map(async (shipment) => {
+    const items = await db.select().from(shipmentItems).where(eq(shipmentItems.shipmentId, shipment.id));
+    const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+    return { ...shipment, totalQuantity };
+  }));
+  
+  return shipmentsWithTotal;
 }
 
 export async function getShipmentById(id: number) {
@@ -445,6 +454,27 @@ export async function createShipmentItem(data: InsertShipmentItem) {
   if (!db) throw new Error("Database not available");
   
   await db.insert(shipmentItems).values(data);
+}
+
+export async function getAllShipmentItems(brandName: string) {
+  if (useLocal()) {
+    return localDb.getAllShipmentItems(brandName);
+  }
+  const db = await getDb();
+  if (!db) return [];
+  
+  // 获取该品牌的所有货件
+  const brandShipments = await getShipmentsByBrand(brandName);
+  const shipmentIds = brandShipments.map(s => s.id);
+  
+  // 获取所有货件明细
+  const allItems = [];
+  for (const shipmentId of shipmentIds) {
+    const items = await db.select().from(shipmentItems).where(eq(shipmentItems.shipmentId, shipmentId));
+    allItems.push(...items);
+  }
+  
+  return allItems;
 }
 
 export async function getShipmentItemsBySku(skuId: number) {
@@ -573,6 +603,39 @@ export async function updatePromotionSale(id: number, data: Partial<InsertPromot
   await db.update(promotionSales).set(data).where(eq(promotionSales.id, id));
 }
 
+export async function upsertPromotionSale(data: { promotionId: number; skuId: number; sku: string; lastYearSales: number }) {
+  if (useLocal()) {
+    localDb.upsertPromotionSale(data as any);
+    return;
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // 检查是否已存在
+  const existing = await db.select().from(promotionSales)
+    .where(
+      and(
+        eq(promotionSales.promotionId, data.promotionId),
+        eq(promotionSales.skuId, data.skuId)
+      )
+    );
+  
+  if (existing.length > 0) {
+    // 更新
+    await db.update(promotionSales)
+      .set({ expectedSales: data.lastYearSales })
+      .where(eq(promotionSales.id, existing[0].id));
+  } else {
+    // 插入
+    await db.insert(promotionSales).values({
+      promotionId: data.promotionId,
+      skuId: data.skuId,
+      sku: data.sku,
+      expectedSales: data.lastYearSales,
+    });
+  }
+}
+
 export async function deletePromotionSalesByPromotion(promotionId: number) {
   if (useLocal()) {
     localDb.deletePromotionSalesByPromotion(promotionId);
@@ -617,6 +680,21 @@ export async function upsertSpringFestivalConfig(brandName: string, year: number
   } else {
     await db.insert(springFestivalConfig).values({ brandName, year, startDate, endDate });
   }
+}
+
+export async function deleteSpringFestivalConfig(brandName: string, year: number) {
+  if (useLocal()) {
+    localDb.deleteSpringFestivalConfig(brandName, year);
+    return;
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.delete(springFestivalConfig)
+    .where(and(
+      eq(springFestivalConfig.brandName, brandName),
+      eq(springFestivalConfig.year, year)
+    ));
 }
 
 // ==================== 发货计划 ====================
@@ -704,7 +782,25 @@ export async function createActualShipment(data: InsertActualShipment) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  await db.insert(actualShipments).values(data);
+  // 检查是否已存在相同的记录（同一SKU、同一发货日期）
+  const existing = await db.select().from(actualShipments)
+    .where(
+      and(
+        eq(actualShipments.brandName, data.brandName),
+        eq(actualShipments.skuId, data.skuId),
+        eq(actualShipments.shipDate, data.shipDate)
+      )
+    );
+  
+  if (existing.length > 0) {
+    // 更新现有记录
+    await db.update(actualShipments)
+      .set({ quantity: data.quantity, notes: data.notes })
+      .where(eq(actualShipments.id, existing[0].id));
+  } else {
+    // 插入新记录
+    await db.insert(actualShipments).values(data);
+  }
 }
 
 export async function deleteActualShipment(id: number) {

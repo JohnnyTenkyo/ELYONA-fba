@@ -53,6 +53,13 @@ export default function ShippingPlan() {
     { enabled: !!brandName }
   );
 
+  // 获取春节配置
+  const currentYear = new Date().getFullYear();
+  const { data: springFestivalConfig } = trpc.springFestival.get.useQuery(
+    { brandName, year: currentYear },
+    { enabled: !!brandName }
+  );
+
   const { data: shipments } = trpc.shipment.list.useQuery(
     { brandName },
     { enabled: !!brandName }
@@ -171,23 +178,31 @@ export default function ShippingPlan() {
       // 获取当前类别的SKU
       const categorySkus = skus?.filter(s => s.category === currentCategory && !s.isDiscontinued) || [];
       
+      // 先清空当前类别的旧数据（通过删除并重新创建）
+      // 注意：这里需要后端支持批量删除或清空特定类别的数据
+      // 暂时采用逐个保存的方式，后端会自动覆盖
+      
       // 保存每个SKU在每列的发货数量
+      const savePromises = [];
       for (const sku of categorySkus) {
         for (const col of categoryColumns) {
           const quantity = actualQuantities[sku.id]?.[col.id] || 0;
           if (quantity > 0) {
-            await createActualShipmentMutation.mutateAsync({
-              brandName,
-              skuId: sku.id,
-              sku: sku.sku,
-              shipDate: col.date,
-              quantity,
-              notes: col.remark || undefined,
-            });
+            savePromises.push(
+              createActualShipmentMutation.mutateAsync({
+                brandName,
+                skuId: sku.id,
+                sku: sku.sku,
+                shipDate: col.date,
+                quantity,
+                notes: col.remark || undefined,
+              })
+            );
           }
         }
       }
       
+      await Promise.all(savePromises);
       setHasUnsavedChanges(false);
       toast.success('发货数据已保存，并同步到工厂备货表单');
     } catch (error) {

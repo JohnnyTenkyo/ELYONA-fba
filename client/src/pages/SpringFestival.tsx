@@ -38,6 +38,7 @@ export default function SpringFestival() {
         firstShipDate: savedConfig.firstShipDate ? new Date(savedConfig.firstShipDate).toISOString().split('T')[0] : '',
       });
     } else {
+      // 没有配置时清空表单
       setConfig({
         holidayStartDate: '',
         holidayEndDate: '',
@@ -46,7 +47,7 @@ export default function SpringFestival() {
         firstShipDate: '',
       });
     }
-  }, [savedConfig]);
+  }, [savedConfig, year]);
 
   const updateMutation = trpc.springFestival.update.useMutation({
     onSuccess: () => {

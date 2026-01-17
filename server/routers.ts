@@ -693,7 +693,9 @@ export const appRouter = router({
     getBySku: publicProcedure
       .input(z.object({ skuId: z.number() }))
       .query(async ({ input }) => {
-        return db.getActualShipmentsBySku(input.skuId);
+        // 返回该SKU的所有实际发货记录
+        const allRecords = await db.getActualShipmentsByBrand(input.brandName || '');
+        return allRecords.filter((r: any) => r.skuId === input.skuId);
       }),
     
     create: publicProcedure

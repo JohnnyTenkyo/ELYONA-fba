@@ -683,7 +683,7 @@ function ShipmentCard({ shipment, onCopy, onMarkArrival, onEditExpected, onUndoA
                   <Copy className="w-3 h-3" />
                 </Button>
                 <Badge variant="outline" className="ml-2 whitespace-nowrap text-base font-semibold px-3 py-1">
-                  共 {isOpen ? totalQuantity : '...'} 件
+                  共 {shipment.totalQuantity || 0} 件
                 </Badge>
               </div>
               <div className="text-sm text-muted-foreground">
@@ -910,10 +910,13 @@ function SkuTable({ skus, shipments, expandedSku, setExpandedSku, onCopy }: {
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead>
-          <tr className="border-b-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
-            <th className="text-center p-4 w-16"></th>
-            <th className="text-center p-4 text-lg font-bold text-gray-800">SKU</th>
-            <th className="text-center p-4 text-lg font-bold text-blue-600">在途总量</th>
+          <tr className="border-b-2 border-[#D4C4B0] bg-gradient-to-r from-[#F5F3F0] to-[#EAE4DC]">
+            <th colSpan={3} className="text-left px-6 py-4">
+              <div className="flex items-center justify-between">
+                <span className="text-base font-bold text-[#8B7968]">SKU 列表</span>
+                <span className="text-base font-bold text-[#7A8B94]">在途数量</span>
+              </div>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -957,27 +960,39 @@ function SkuRow({ sku, isExpanded, onToggle, onCopy }: {
 
   return (
     <>
-      <tr className="border-b hover:bg-blue-50 transition-colors">
-        <td className="p-4 text-center">
-          {inTransitTotal > 0 && (
-            <Button variant="ghost" size="sm" className="h-10 w-10 p-0 hover:bg-blue-100" onClick={onToggle}>
-              {isExpanded ? <ChevronDown className="w-6 h-6 text-blue-600" /> : <ChevronRight className="w-6 h-6 text-blue-600" />}
-            </Button>
-          )}
-        </td>
-        <td className="p-4 text-center">
-          <span className="text-lg font-bold text-gray-800">{sku.sku}</span>
-        </td>
-        <td className="p-4 text-center">
-          <span className="text-xl font-extrabold text-blue-600 bg-blue-50 px-4 py-2 rounded-lg inline-block">
-            {inTransitTotal}
-          </span>
+      <tr className="border-b hover:bg-[#F5F3F0] transition-colors">
+        <td colSpan={3} className="p-0">
+          <div className="flex items-center justify-between px-6 py-4">
+            {/* 左侧：SKU标签 + 展开按钮 */}
+            <div className="flex items-center gap-3">
+              <div className="bg-gradient-to-r from-[#B8A99A] to-[#C9B8A8] px-4 py-2 rounded-lg shadow-sm">
+                <span className="text-base font-semibold text-white">{sku.sku}</span>
+              </div>
+              {inTransitTotal > 0 && (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-8 w-8 p-0 hover:bg-[#E8DDD0] rounded-lg transition-all" 
+                  onClick={onToggle}
+                >
+                  {isExpanded ? 
+                    <ChevronDown className="w-5 h-5 text-[#8B7968]" /> : 
+                    <ChevronRight className="w-5 h-5 text-[#8B7968]" />
+                  }
+                </Button>
+              )}
+            </div>
+            {/* 右侧：在途数量标签 */}
+            <div className="bg-gradient-to-r from-[#9EADB5] to-[#B0BEC5] px-5 py-2 rounded-lg shadow-sm">
+              <span className="text-lg font-bold text-white">{inTransitTotal}</span>
+            </div>
+          </div>
         </td>
       </tr>
       {isExpanded && (
         <tr>
           <td colSpan={3} className="p-0">
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 border-l-4 border-blue-400">
+            <div className="bg-gradient-to-r from-[#F5F3F0] to-[#EAE4DC] p-6 border-l-4 border-[#B8A99A]">
               {isLoading ? (
                 <p className="text-center text-base text-muted-foreground">加载中...</p>
               ) : shipmentItems && shipmentItems.length > 0 ? (

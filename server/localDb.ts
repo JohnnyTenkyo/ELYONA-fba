@@ -264,10 +264,17 @@ class LocalDatabase {
   }
 
   // ==================== 货件相关 ====================
-  getShipmentsByBrand(brandName: string): LocalShipment[] {
-    return this.shipments
+  getShipmentsByBrand(brandName: string): (LocalShipment & { totalQuantity: number })[] {
+    const shipmentList = this.shipments
       .filter(s => s.brandName === brandName)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    
+    // 为每个货件添加总数量字段
+    return shipmentList.map(shipment => {
+      const items = this.shipmentItems.filter(item => item.shipmentId === shipment.id);
+      const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+      return { ...shipment, totalQuantity };
+    });
   }
 
   getShipmentById(id: number): LocalShipment | undefined {
@@ -319,6 +326,12 @@ class LocalDatabase {
     return this.shipmentItems.filter(item => item.shipmentId === shipmentId);
   }
 
+  getAllShipmentItems(brandName: string): LocalShipmentItem[] {
+    const brandShipments = this.getShipmentsByBrand(brandName);
+    const shipmentIds = brandShipments.map(s => s.id);
+    return this.shipmentItems.filter(item => shipmentIds.includes(item.shipmentId));
+  }
+
   createShipmentItem(data: { shipmentId: number; skuId: number; sku: string; quantity: number }): LocalShipmentItem {
     const item: LocalShipmentItem = {
       id: this.nextShipmentItemId++,
@@ -346,7 +359,7 @@ class LocalDatabase {
   getPromotionsByBrand(brandName: string): LocalPromotion[] {
     return this.promotions
       .filter(p => p.brandName === brandName)
-      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
   getPromotionById(id: number): LocalPromotion | undefined {
@@ -416,6 +429,24 @@ class LocalDatabase {
     const sale = this.promotionSales.find(s => s.id === id);
     if (sale) {
       Object.assign(sale, data);
+    }
+  }
+
+  upsertPromotionSale(data: { promotionId: number; skuId: number; sku: string; lastYearSales: number }): void {
+    const existing = this.promotionSales.find(s => s.promotionId === data.promotionId && s.skuId === data.skuId);
+    if (existing) {
+      existing.expectedSales = data.lastYearSales;
+    } else {
+      const sale: LocalPromotionSale = {
+        id: this.nextPromotionSaleId++,
+        promotionId: data.promotionId,
+        skuId: data.skuId,
+        sku: data.sku,
+        expectedSales: data.lastYearSales,
+        actualSales: null,
+        createdAt: new Date(),
+      };
+      this.promotionSales.push(sale);
     }
   }
 
