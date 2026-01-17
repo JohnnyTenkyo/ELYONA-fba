@@ -1,5 +1,8 @@
 import { eq, and, desc, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle as drizzleMysql } from "drizzle-orm/mysql2";
+import { drizzle as drizzlePostgres } from "drizzle-orm/postgres-js";
+import postgres from 'postgres';
+import mysql from 'mysql2/promise';
 import { 
   InsertUser, users, 
   skus, InsertSku, Sku,
@@ -24,7 +27,19 @@ let _useLocalDb = false;
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      const dbUrl = process.env.DATABASE_URL;
+      // 检测数据库类型
+      if (dbUrl.startsWith('postgres')) {
+        // PostgreSQL (Supabase)
+        const client = postgres(dbUrl);
+        _db = drizzlePostgres(client) as any;
+        console.log("[Database] Connected to PostgreSQL");
+      } else {
+        // MySQL
+        const connection = await mysql.createConnection(dbUrl);
+        _db = drizzleMysql(connection) as any;
+        console.log("[Database] Connected to MySQL");
+      }
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
