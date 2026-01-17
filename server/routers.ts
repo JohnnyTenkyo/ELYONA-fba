@@ -497,7 +497,7 @@ export const appRouter = router({
         return db.getAllShipmentItems(input.brandName);
       }),
     
-    // 更新预计到货日期
+    // 更新预计到货日期 - 仅更新日期，不改变状态（除非是运输中状态）
     updateExpectedDate: publicProcedure
       .input(z.object({
         id: z.number(),
@@ -509,35 +509,50 @@ export const appRouter = router({
           throw new TRPCError({ code: 'NOT_FOUND', message: '货件不存在' });
         }
         
-        // 判断是提前还是延迟
-        let status = shipment.status;
-        if (shipment.shipDate && status === 'shipping') {
-          // 计算原始预计到货日期
-          const config = await db.getTransportConfig(shipment.brandName);
-          const totalDays = shipment.category === 'standard' 
-            ? (config?.standardShippingDays || 25) + (config?.standardShelfDays || 10)
-            : (config?.oversizedShippingDays || 35) + (config?.oversizedShelfDays || 10);
-          
-          const shipDate = new Date(shipment.shipDate);
-          const originalExpected = new Date(shipDate);
-          originalExpected.setDate(originalExpected.getDate() + totalDays);
-          
-          const newExpected = new Date(input.expectedArrivalDate);
-          if (newExpected < originalExpected) {
-            status = 'early';
-          } else if (newExpected > originalExpected) {
-            status = 'delayed';
-          } else {
-            status = 'shipping';
+        // 只更新预计到货日期，不改变状态
+        // 状态只在确认到达时根据实际到达日期判断
+        await db.updateShipment(input.id, {
+          expectedArrivalDate: input.expectedArrivalDate,
+        } as any);
+        
+        return { success: true, status: shipment.status };
+      }),
+    
+    // 撤销到达状态
+    undoArrival: publicProcedure
+      .input(z.object({
+        id: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const shipment = await db.getShipmentById(input.id);
+        if (!shipment) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: '货件不存在' });
+        }
+        
+        // 检查是否已到达
+        if (!['arrived', 'early', 'delayed'].includes(shipment.status) || !shipment.actualArrivalDate) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: '货件尚未标记为到达' });
+        }
+        
+        // 恢复SKU的库存数据
+        const items = await db.getShipmentItems(input.id);
+        for (const item of items) {
+          const sku = await db.getSkuById(item.skuId);
+          if (sku) {
+            await db.updateSku(item.skuId, {
+              fbaStock: Math.max(0, (sku.fbaStock || 0) - item.quantity),
+              inTransitStock: (sku.inTransitStock || 0) + item.quantity,
+            });
           }
         }
         
+        // 更新货件状态为运输中
         await db.updateShipment(input.id, {
-          expectedArrivalDate: input.expectedArrivalDate,
-          status,
+          status: 'shipping',
+          actualArrivalDate: null,
         } as any);
         
-        return { success: true, status };
+        return { success: true };
       }),
   }),
 

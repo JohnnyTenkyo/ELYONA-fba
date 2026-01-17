@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useLocalAuth } from '@/contexts/AuthContext';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
-import { Download, Plus, Search, Package, Truck, AlertCircle, AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Copy, Trash2, Calendar, X } from 'lucide-react';
+import { Download, Plus, Search, Package, Truck, AlertCircle, AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Copy, Trash2, Calendar, X, Save } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 // 实际发货列类型
@@ -18,6 +18,7 @@ interface ActualShipmentColumn {
   id: string;
   date: string;
   remark: string;
+  category: 'standard' | 'oversized'; // 添加类别字段
 }
 
 export default function ShippingPlan() {
@@ -26,13 +27,17 @@ export default function ShippingPlan() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddColumnOpen, setIsAddColumnOpen] = useState(false);
-  const [newColumn, setNewColumn] = useState({ date: '', remark: '' });
+  const [newColumn, setNewColumn] = useState({ date: '', remark: '', category: 'standard' as 'standard' | 'oversized' });
+  const [currentCategory, setCurrentCategory] = useState<'standard' | 'oversized'>('standard');
   
-  // 动态实际发货列
+  // 动态实际发货列 - 标准件和大件独立
   const [actualColumns, setActualColumns] = useState<ActualShipmentColumn[]>([]);
   
   // 每个SKU在每列的发货数量
   const [actualQuantities, setActualQuantities] = useState<Record<string, Record<string, number>>>({});
+  
+  // 是否有未保存的更改
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   
   // 展开状态
   const [expandedInTransit, setExpandedInTransit] = useState<Record<number, boolean>>({});
@@ -58,17 +63,46 @@ export default function ShippingPlan() {
     { enabled: !!brandName }
   );
 
-  // 添加实际发货列
+  // 获取已保存的实际发货记录
+  const { data: savedActualShipments } = trpc.actualShipment.list.useQuery(
+    { brandName },
+    { enabled: !!brandName }
+  );
+
+  // 创建实际发货记录的mutation
+  const createActualShipmentMutation = trpc.actualShipment.create.useMutation({
+    onSuccess: () => {
+      utils.actualShipment.list.invalidate();
+      utils.factoryInventory.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  // 删除实际发货记录的mutation
+  const deleteActualShipmentMutation = trpc.actualShipment.delete.useMutation({
+    onSuccess: () => {
+      utils.actualShipment.list.invalidate();
+      utils.factoryInventory.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  // 添加实际发货列 - 使用当前选中的类别
   const handleAddColumn = () => {
     if (!newColumn.date) {
       toast.error('请选择发货日期');
       return;
     }
     const id = `col_${Date.now()}`;
-    setActualColumns([...actualColumns, { id, date: newColumn.date, remark: newColumn.remark }]);
-    setNewColumn({ date: '', remark: '' });
+    setActualColumns([...actualColumns, { 
+      id, 
+      date: newColumn.date, 
+      remark: newColumn.remark,
+      category: currentCategory // 使用当前选中的类别
+    }]);
+    setNewColumn({ date: '', remark: '', category: currentCategory });
     setIsAddColumnOpen(false);
-    toast.success('已添加实际发货列');
+    toast.success(`已添加${currentCategory === 'standard' ? '标准件' : '大件'}实际发货列`);
   };
 
   // 删除实际发货列
@@ -79,6 +113,7 @@ export default function ShippingPlan() {
       delete newQuantities[skuId][columnId];
     });
     setActualQuantities(newQuantities);
+    setHasUnsavedChanges(true);
   };
 
   // 更新某个SKU在某列的发货数量
@@ -90,6 +125,40 @@ export default function ShippingPlan() {
         [columnId]: value
       }
     }));
+    setHasUnsavedChanges(true);
+  };
+
+  // 保存发货数据到数据库
+  const handleSave = async () => {
+    try {
+      // 获取当前类别的列
+      const categoryColumns = actualColumns.filter(c => c.category === currentCategory);
+      
+      // 获取当前类别的SKU
+      const categorySkus = skus?.filter(s => s.category === currentCategory && !s.isDiscontinued) || [];
+      
+      // 保存每个SKU在每列的发货数量
+      for (const sku of categorySkus) {
+        for (const col of categoryColumns) {
+          const quantity = actualQuantities[sku.id]?.[col.id] || 0;
+          if (quantity > 0) {
+            await createActualShipmentMutation.mutateAsync({
+              brandName,
+              skuId: sku.id,
+              sku: sku.sku,
+              shipDate: col.date,
+              quantity,
+              notes: col.remark || undefined,
+            });
+          }
+        }
+      }
+      
+      setHasUnsavedChanges(false);
+      toast.success('发货数据已保存，并同步到工厂备货表单');
+    } catch (error) {
+      toast.error('保存失败');
+    }
   };
 
   // 获取SKU的在途货件详情
@@ -99,7 +168,7 @@ export default function ShippingPlan() {
     const items = shipmentItems.filter((item: any) => item.skuId === skuId);
     return items.map((item: any) => {
       const shipment = shipments.find((s: any) => s.id === item.shipmentId);
-      if (!shipment || shipment.status === 'arrived') return null;
+      if (!shipment || shipment.status !== 'shipping') return null;
       
       const expectedDate = shipment.expectedArrivalDate 
         ? new Date(shipment.expectedArrivalDate).toISOString().split('T')[0]
@@ -251,10 +320,19 @@ export default function ShippingPlan() {
     };
   }, [skus, searchTerm]);
 
-  // 计算SKU的最终发货数量（所有实际发货列的合计）
+  // 获取当前类别的发货列
+  const currentCategoryColumns = useMemo(() => {
+    return actualColumns.filter(c => c.category === currentCategory);
+  }, [actualColumns, currentCategory]);
+
+  // 计算SKU的最终发货数量（当前类别所有实际发货列的合计）
   const getFinalQuantity = (skuId: number) => {
     const skuQuantities = actualQuantities[skuId] || {};
-    return Object.values(skuQuantities).reduce((sum, qty) => sum + (qty || 0), 0);
+    let total = 0;
+    currentCategoryColumns.forEach(col => {
+      total += skuQuantities[col.id] || 0;
+    });
+    return total;
   };
 
   // 计算合计行
@@ -272,7 +350,7 @@ export default function ShippingPlan() {
       totalSuggested += plan.suggestedQuantity;
       totalFinal += getFinalQuantity(sku.id);
 
-      actualColumns.forEach(col => {
+      currentCategoryColumns.forEach(col => {
         columnTotals[col.id] = (columnTotals[col.id] || 0) + (actualQuantities[sku.id]?.[col.id] || 0);
       });
     });
@@ -283,10 +361,14 @@ export default function ShippingPlan() {
   // 导出Excel
   const handleExport = (category: 'standard' | 'oversized') => {
     const data = category === 'standard' ? filteredSkus.standard : filteredSkus.oversized;
+    const categoryColumns = actualColumns.filter(c => c.category === category);
     
     const exportData = data.map(sku => {
       const plan = calculatePlanData(sku);
-      const finalQty = getFinalQuantity(sku.id);
+      let finalQty = 0;
+      categoryColumns.forEach(col => {
+        finalQty += actualQuantities[sku.id]?.[col.id] || 0;
+      });
       const diff = finalQty - plan.suggestedQuantity;
 
       const row: any = {
@@ -301,7 +383,7 @@ export default function ShippingPlan() {
       };
 
       // 添加实际发货列
-      actualColumns.forEach(col => {
+      categoryColumns.forEach(col => {
         const label = col.remark ? `${col.date}(${col.remark})` : col.date;
         row[label] = actualQuantities[sku.id]?.[col.id] || 0;
       });
@@ -325,7 +407,7 @@ export default function ShippingPlan() {
       '计划发货日期': '',
       '建议发货数量': totals.totalSuggested,
     };
-    actualColumns.forEach(col => {
+    categoryColumns.forEach(col => {
       const label = col.remark ? `${col.date}(${col.remark})` : col.date;
       totalRow[label] = totals.columnTotals[col.id] || 0;
     });
@@ -360,6 +442,7 @@ export default function ShippingPlan() {
   };
 
   const renderTable = (data: any[], category: 'standard' | 'oversized') => {
+    const categoryColumns = actualColumns.filter(c => c.category === category);
     const totals = calculateTotals(data);
     
     return (
@@ -374,7 +457,7 @@ export default function ShippingPlan() {
               <th>缺货预测</th>
               <th>计划发货</th>
               <th>建议数量</th>
-              {actualColumns.map(col => (
+              {categoryColumns.map(col => (
                 <th key={col.id} className="min-w-[120px]">
                   <div className="flex items-center justify-between gap-1">
                     <div className="text-xs">
@@ -400,7 +483,7 @@ export default function ShippingPlan() {
           <tbody>
             {data.length === 0 ? (
               <tr>
-                <td colSpan={10 + actualColumns.length} className="text-center py-8">
+                <td colSpan={10 + categoryColumns.length} className="text-center py-8">
                   <Package className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
                   <p className="text-muted-foreground">暂无数据</p>
                 </td>
@@ -491,7 +574,7 @@ export default function ShippingPlan() {
                       </td>
                       <td>{plan.planShipDate}</td>
                       <td>{plan.suggestedQuantity}</td>
-                      {actualColumns.map(col => (
+                      {categoryColumns.map(col => (
                         <td key={col.id}>
                           <Input
                             type="number"
@@ -519,7 +602,7 @@ export default function ShippingPlan() {
                   <td>-</td>
                   <td>-</td>
                   <td>{totals.totalSuggested}</td>
-                  {actualColumns.map(col => (
+                  {categoryColumns.map(col => (
                     <td key={col.id}>{totals.columnTotals[col.id] || 0}</td>
                   ))}
                   <td className="bg-primary/10">{totals.totalFinal}</td>
@@ -551,14 +634,22 @@ export default function ShippingPlan() {
             />
           </div>
         </div>
-        <Button onClick={() => setIsAddColumnOpen(true)}>
-          <Plus className="w-4 h-4 mr-1" />
-          添加实际发货列
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setIsAddColumnOpen(true)}>
+            <Plus className="w-4 h-4 mr-1" />
+            添加实际发货列
+          </Button>
+          {hasUnsavedChanges && (
+            <Button onClick={handleSave} className="bg-green-600 hover:bg-green-700">
+              <Save className="w-4 h-4 mr-1" />
+              保存数据
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* 发货计划表 */}
-      <Tabs defaultValue="standard">
+      <Tabs defaultValue="standard" onValueChange={(v) => setCurrentCategory(v as 'standard' | 'oversized')}>
         <div className="flex items-center justify-between mb-4">
           <TabsList>
             <TabsTrigger value="standard" className="gap-2">
@@ -615,9 +706,13 @@ export default function ShippingPlan() {
       <Dialog open={isAddColumnOpen} onOpenChange={setIsAddColumnOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>添加实际发货列</DialogTitle>
+            <DialogTitle>添加{currentCategory === 'standard' ? '标准件' : '大件'}实际发货列</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="p-3 bg-muted rounded-lg text-sm">
+              当前正在为 <span className="font-medium">{currentCategory === 'standard' ? '标准件' : '大件'}</span> 添加发货列。
+              标准件和大件的发货列是独立的。
+            </div>
             <div className="space-y-2">
               <Label>发货日期 *</Label>
               <Input

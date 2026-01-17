@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useLocalAuth } from '@/contexts/AuthContext';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,10 @@ const addDays = (date: string, days: number): string => {
   d.setDate(d.getDate() + days);
   return d.toISOString().split('T')[0];
 };
+
+// 常量：备货期和缓冲时间
+const PREP_DAYS = 35; // 标准件和大件备货期都是35天
+const BUFFER_DAYS = 14; // 缓冲时间14天
 
 export default function Promotions() {
   const { brandName } = useLocalAuth();
@@ -201,11 +205,13 @@ export default function Promotions() {
     e.target.value = '';
   };
 
-  // 计算运输周期
+  // 运输周期（从配置获取，但备货期固定35天）
   const standardShippingDays = (transportConfig?.standardShippingDays || 25) + (transportConfig?.standardShelfDays || 10);
   const oversizedShippingDays = (transportConfig?.oversizedShippingDays || 35) + (transportConfig?.oversizedShelfDays || 10);
-  const standardLeadTime = standardShippingDays + 7; // 35+7=42天
-  const oversizedLeadTime = oversizedShippingDays + 7; // 45+7=52天
+  
+  // 总前置时间 = 备货期 + 运输周期 + 缓冲时间
+  const standardLeadTime = PREP_DAYS + standardShippingDays + BUFFER_DAYS;
+  const oversizedLeadTime = PREP_DAYS + oversizedShippingDays + BUFFER_DAYS;
 
   // 计算促销备货建议
   const calculatePromotionSuggestions = (promotion: any) => {
@@ -218,10 +224,10 @@ export default function Promotions() {
     const thisYearEnd = formatDate(promotion.thisYearEndDate);
     const thisYearDays = thisYearEnd ? daysBetween(thisYearStart, thisYearEnd) + 1 : lastYearDays;
 
-    // 标准件最晚发货时间
-    const standardLastShipDate = addDays(thisYearStart, -standardLeadTime);
+    // 标准件最晚发货时间（备货期结束）
+    const standardLastShipDate = addDays(thisYearStart, -(standardShippingDays + BUFFER_DAYS));
     // 大件最晚发货时间
-    const oversizedLastShipDate = addDays(thisYearStart, -oversizedLeadTime);
+    const oversizedLastShipDate = addDays(thisYearStart, -(oversizedShippingDays + BUFFER_DAYS));
 
     const suggestions: any[] = [];
 
@@ -268,6 +274,33 @@ export default function Promotions() {
   const selectedPromotion = promotions?.find(p => p.id === selectedPromotionId);
   const suggestions = selectedPromotion ? calculatePromotionSuggestions(selectedPromotion) : [];
 
+  // 按时间排序促销项目（临近的排在前面）
+  const sortedPromotions = useMemo(() => {
+    if (!promotions) return [];
+    const today = new Date().toISOString().split('T')[0];
+    
+    return [...promotions].sort((a, b) => {
+      const aStart = formatDate(a.thisYearStartDate);
+      const bStart = formatDate(b.thisYearStartDate);
+      
+      // 没有今年日期的排在最后
+      if (!aStart && !bStart) return 0;
+      if (!aStart) return 1;
+      if (!bStart) return -1;
+      
+      // 计算距今天数
+      const aDays = daysBetween(today, aStart);
+      const bDays = daysBetween(today, bStart);
+      
+      // 已过期的排在后面
+      if (aDays < 0 && bDays >= 0) return 1;
+      if (bDays < 0 && aDays >= 0) return -1;
+      
+      // 都过期或都未过期，按日期排序
+      return aDays - bDays;
+    });
+  }, [promotions]);
+
   return (
     <div className="space-y-6">
       {/* 年度横道图 */}
@@ -280,9 +313,7 @@ export default function Promotions() {
         </CardHeader>
         <CardContent>
           <GanttChart 
-            promotions={promotions || []} 
-            standardLeadTime={standardLeadTime}
-            oversizedLeadTime={oversizedLeadTime}
+            promotions={sortedPromotions} 
             standardShippingDays={standardShippingDays}
             oversizedShippingDays={oversizedShippingDays}
           />
@@ -309,7 +340,7 @@ export default function Promotions() {
                 <Input
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="如：春季Prime Day、黑五网一"
+                  placeholder="如：Prime Day、黑五等"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -359,26 +390,26 @@ export default function Promotions() {
         </Dialog>
       </div>
 
-      {/* 促销项目卡片列表 */}
-      {isLoading ? (
-        <p className="text-center py-8 text-muted-foreground">加载中...</p>
-      ) : promotions?.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground">
-            暂无促销项目，点击上方按钮添加
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {promotions?.map(promotion => {
+      {/* 促销项目卡片列表 - 按时间排序 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {isLoading ? (
+          <p className="col-span-full text-center py-8 text-muted-foreground">加载中...</p>
+        ) : sortedPromotions.length === 0 ? (
+          <p className="col-span-full text-center py-8 text-muted-foreground">暂无促销项目</p>
+        ) : (
+          sortedPromotions.map(promotion => {
             const thisYearStart = formatDate(promotion.thisYearStartDate);
-            const daysToPromo = thisYearStart ? daysBetween(new Date().toISOString().split('T')[0], thisYearStart) : null;
-            const showCountdown = daysToPromo !== null && daysToPromo > 0 && daysToPromo <= 60;
-
+            const today = new Date().toISOString().split('T')[0];
+            const daysToStart = thisYearStart ? daysBetween(today, thisYearStart) : null;
+            const isUpcoming = daysToStart !== null && daysToStart > 0 && daysToStart <= 60;
+            const isPast = daysToStart !== null && daysToStart < 0;
+            
             return (
               <Card 
                 key={promotion.id} 
-                className={`cursor-pointer transition-all ${selectedPromotionId === promotion.id ? 'ring-2 ring-primary' : ''}`}
+                className={`cursor-pointer transition-all hover:shadow-md ${
+                  selectedPromotionId === promotion.id ? 'ring-2 ring-primary' : ''
+                } ${isUpcoming ? 'border-orange-300 bg-orange-50' : ''} ${isPast ? 'opacity-60' : ''}`}
                 onClick={() => setSelectedPromotionId(promotion.id)}
               >
                 <CardHeader className="pb-2">
@@ -390,23 +421,20 @@ export default function Promotions() {
                       </Button>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="sm" className="text-destructive" onClick={(e) => e.stopPropagation()}>
-                            <Trash2 className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" onClick={(e) => e.stopPropagation()}>
+                            <Trash2 className="w-4 h-4 text-destructive" />
                           </Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle>确认删除？</AlertDialogTitle>
+                            <AlertDialogTitle>确认删除</AlertDialogTitle>
                             <AlertDialogDescription>
-                              确定要删除促销项目 "{promotion.name}" 吗？相关的历史销量数据也会被删除。
+                              确定要删除促销项目 "{promotion.name}" 吗？此操作不可撤销。
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
                             <AlertDialogCancel>取消</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => deleteMutation.mutate({ id: promotion.id })}
-                              className="bg-destructive text-destructive-foreground"
-                            >
+                            <AlertDialogAction onClick={() => deleteMutation.mutate({ id: promotion.id })}>
                               删除
                             </AlertDialogAction>
                           </AlertDialogFooter>
@@ -416,36 +444,39 @@ export default function Promotions() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm">
-                  {showCountdown && (
-                    <div className="flex items-center gap-2 text-orange-600 font-medium">
+                  {promotion.lastYearStartDate && (
+                    <div className="flex items-center gap-2 text-muted-foreground">
                       <Clock className="w-4 h-4" />
-                      距离促销还有 {daysToPromo} 天
+                      <span>去年: {formatDate(promotion.lastYearStartDate)} ~ {formatDate(promotion.lastYearEndDate)}</span>
                     </div>
                   )}
-                  <div className="text-muted-foreground">
-                    <p>去年: {formatDate(promotion.lastYearStartDate) || '-'} ~ {formatDate(promotion.lastYearEndDate) || '-'}</p>
-                    <p>今年: {formatDate(promotion.thisYearStartDate) || '-'} ~ {formatDate(promotion.thisYearEndDate) || '-'}</p>
-                  </div>
-                  <div className="flex gap-2 text-xs">
-                    <Badge variant="outline" className="text-blue-600 border-blue-600">
-                      <Package className="w-3 h-3 mr-1" />
-                      标准件最晚发货: {thisYearStart ? addDays(thisYearStart, -standardLeadTime) : '-'}
-                    </Badge>
-                  </div>
-                  <div className="flex gap-2 text-xs">
-                    <Badge variant="outline" className="text-orange-600 border-orange-600">
-                      <Truck className="w-3 h-3 mr-1" />
-                      大件最晚发货: {thisYearStart ? addDays(thisYearStart, -oversizedLeadTime) : '-'}
-                    </Badge>
-                  </div>
+                  {promotion.thisYearStartDate && (
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-primary" />
+                      <span className="font-medium">今年: {formatDate(promotion.thisYearStartDate)} ~ {formatDate(promotion.thisYearEndDate) || '待定'}</span>
+                    </div>
+                  )}
+                  {daysToStart !== null && (
+                    <div className="mt-2">
+                      {isPast ? (
+                        <Badge variant="outline" className="text-muted-foreground">已结束</Badge>
+                      ) : daysToStart <= 7 ? (
+                        <Badge className="bg-red-500">还有 {daysToStart} 天开始</Badge>
+                      ) : daysToStart <= 30 ? (
+                        <Badge className="bg-orange-500">还有 {daysToStart} 天开始</Badge>
+                      ) : (
+                        <Badge variant="outline">还有 {daysToStart} 天开始</Badge>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
 
-      {/* 选中项目的详情 */}
+      {/* 选中促销项目的详情 */}
       {selectedPromotion && (
         <Card>
           <CardHeader className="pb-3">
@@ -476,20 +507,26 @@ export default function Promotions() {
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="standard">
-              <TabsList>
-                <TabsTrigger value="standard">标准件</TabsTrigger>
-                <TabsTrigger value="oversized">大件</TabsTrigger>
+              <TabsList className="mb-4">
+                <TabsTrigger value="standard" className="gap-2">
+                  <Package className="w-4 h-4" />
+                  标准件
+                </TabsTrigger>
+                <TabsTrigger value="oversized" className="gap-2">
+                  <Truck className="w-4 h-4" />
+                  大件
+                </TabsTrigger>
               </TabsList>
               <TabsContent value="standard">
                 <SuggestionTable 
                   suggestions={suggestions.filter(s => s.category === 'standard')} 
-                  category="standard"
+                  category="standard" 
                 />
               </TabsContent>
               <TabsContent value="oversized">
                 <SuggestionTable 
                   suggestions={suggestions.filter(s => s.category === 'oversized')} 
-                  category="oversized"
+                  category="oversized" 
                 />
               </TabsContent>
             </Tabs>
@@ -613,10 +650,8 @@ function SuggestionTable({ suggestions, category }: { suggestions: any[]; catego
 }
 
 // 年度横道图组件
-function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardShippingDays, oversizedShippingDays }: {
+function GanttChart({ promotions, standardShippingDays, oversizedShippingDays }: {
   promotions: any[];
-  standardLeadTime: number;
-  oversizedLeadTime: number;
   standardShippingDays: number;
   oversizedShippingDays: number;
 }) {
@@ -653,7 +688,7 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
     <ScrollArea className="w-full">
       <div className="min-w-[1200px] pb-4">
         {/* 时间轴头部 */}
-        <div className="relative h-8 border-b mb-2">
+        <div className="relative h-10 border-b mb-2">
           {months.map((month, index) => (
             <div
               key={index}
@@ -663,17 +698,26 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
               {month.name}
             </div>
           ))}
-          {/* 当前时间标记 */}
+          {/* 当前时间标记 - 更醒目的设计 */}
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-10"
+            className="absolute top-0 bottom-0 z-20"
             style={{ left: `${(todayOffset / totalDays) * 100}%` }}
           >
-            <div className="absolute -top-1 -left-2 text-xs text-red-500 whitespace-nowrap">今天</div>
+            <div className="relative">
+              {/* 三角形指示器 */}
+              <div className="absolute -top-1 -left-2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[8px] border-l-transparent border-r-transparent border-t-red-500" />
+              {/* 竖线 */}
+              <div className="absolute top-1 left-0 w-0.5 h-[calc(100%+2rem)] bg-gradient-to-b from-red-500 to-red-300" style={{ height: `${activePromotions.length * 80 + 40}px` }} />
+              {/* 今天标签 */}
+              <div className="absolute -top-6 -left-6 px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded shadow-md whitespace-nowrap">
+                今天
+              </div>
+            </div>
           </div>
         </div>
 
         {/* 项目横道 */}
-        <div className="space-y-4">
+        <div className="space-y-4 mt-4">
           {activePromotions.map(promotion => {
             const thisYearStart = formatDate(promotion.thisYearStartDate);
             const thisYearEnd = formatDate(promotion.thisYearEndDate) || thisYearStart;
@@ -683,14 +727,29 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
             const promoDays = promoEndOffset - promoStartOffset + 1;
 
             // 标准件时间计算
-            const standardLastShipDate = addDays(thisYearStart, -standardLeadTime);
-            const standardShipStartOffset = daysBetween(yearStart.toISOString().split('T')[0], standardLastShipDate);
-            const standardPrepDays = standardLeadTime - standardShippingDays;
+            // 备货期结束 -> 运输期结束 -> 缓冲期结束 -> 促销开始
+            const standardBufferEndDate = thisYearStart; // 缓冲期结束=促销开始
+            const standardBufferStartDate = addDays(thisYearStart, -BUFFER_DAYS); // 缓冲期开始
+            const standardShipEndDate = standardBufferStartDate; // 运输期结束=缓冲期开始
+            const standardShipStartDate = addDays(standardShipEndDate, -standardShippingDays); // 运输期开始（最晚发货日）
+            const standardPrepEndDate = standardShipStartDate; // 备货期结束=运输期开始
+            const standardPrepStartDate = addDays(standardPrepEndDate, -PREP_DAYS); // 备货期开始
+
+            const standardPrepStartOffset = daysBetween(yearStart.toISOString().split('T')[0], standardPrepStartDate);
+            const standardShipStartOffset = daysBetween(yearStart.toISOString().split('T')[0], standardShipStartDate);
+            const standardBufferStartOffset = daysBetween(yearStart.toISOString().split('T')[0], standardBufferStartDate);
 
             // 大件时间计算
-            const oversizedLastShipDate = addDays(thisYearStart, -oversizedLeadTime);
-            const oversizedShipStartOffset = daysBetween(yearStart.toISOString().split('T')[0], oversizedLastShipDate);
-            const oversizedPrepDays = oversizedLeadTime - oversizedShippingDays;
+            const oversizedBufferEndDate = thisYearStart;
+            const oversizedBufferStartDate = addDays(thisYearStart, -BUFFER_DAYS);
+            const oversizedShipEndDate = oversizedBufferStartDate;
+            const oversizedShipStartDate = addDays(oversizedShipEndDate, -oversizedShippingDays);
+            const oversizedPrepEndDate = oversizedShipStartDate;
+            const oversizedPrepStartDate = addDays(oversizedPrepEndDate, -PREP_DAYS);
+
+            const oversizedPrepStartOffset = daysBetween(yearStart.toISOString().split('T')[0], oversizedPrepStartDate);
+            const oversizedShipStartOffset = daysBetween(yearStart.toISOString().split('T')[0], oversizedShipStartDate);
+            const oversizedBufferStartOffset = daysBetween(yearStart.toISOString().split('T')[0], oversizedBufferStartDate);
 
             return (
               <div key={promotion.id} className="space-y-1">
@@ -704,14 +763,15 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
                       <div
                         className="absolute h-full bg-blue-200 rounded-l cursor-pointer"
                         style={{
-                          left: `${Math.max(0, (standardShipStartOffset - standardPrepDays) / totalDays * 100)}%`,
-                          width: `${(standardPrepDays / totalDays) * 100}%`,
+                          left: `${Math.max(0, standardPrepStartOffset / totalDays * 100)}%`,
+                          width: `${(PREP_DAYS / totalDays) * 100}%`,
                         }}
                       />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>标准件备货期: {standardPrepDays}天</p>
-                      <p>{addDays(standardLastShipDate, -standardPrepDays)} ~ {addDays(standardLastShipDate, -1)}</p>
+                      <p className="font-medium">标准件备货期: {PREP_DAYS}天</p>
+                      <p>{standardPrepStartDate} ~ {addDays(standardPrepEndDate, -1)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">工厂生产和准备货物的时间</p>
                     </TooltipContent>
                   </Tooltip>
                   
@@ -727,8 +787,28 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
                       />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>标准件运输期: {standardShippingDays}天</p>
-                      <p>最晚发货: {standardLastShipDate}</p>
+                      <p className="font-medium">标准件运输期: {standardShippingDays}天</p>
+                      <p>最晚发货: {standardShipStartDate}</p>
+                      <p>预计到达: {addDays(standardShipEndDate, -1)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">从发货到入仓上架的时间</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  
+                  {/* 缓冲期 */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div
+                        className="absolute h-full bg-gray-300 cursor-pointer"
+                        style={{
+                          left: `${Math.max(0, standardBufferStartOffset / totalDays * 100)}%`,
+                          width: `${(BUFFER_DAYS / totalDays) * 100}%`,
+                        }}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="font-medium">缓冲时间: {BUFFER_DAYS}天</p>
+                      <p>{standardBufferStartDate} ~ {addDays(standardBufferEndDate, -1)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">运输到达后到促销开始前的安全缓冲期，用于应对物流延迟等意外情况</p>
                     </TooltipContent>
                   </Tooltip>
                   
@@ -744,7 +824,7 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
                       />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>促销期: {promoDays}天</p>
+                      <p className="font-medium">促销期: {promoDays}天</p>
                       <p>{thisYearStart} ~ {thisYearEnd}</p>
                     </TooltipContent>
                   </Tooltip>
@@ -762,14 +842,15 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
                       <div
                         className="absolute h-full bg-orange-200 rounded-l cursor-pointer"
                         style={{
-                          left: `${Math.max(0, (oversizedShipStartOffset - oversizedPrepDays) / totalDays * 100)}%`,
-                          width: `${(oversizedPrepDays / totalDays) * 100}%`,
+                          left: `${Math.max(0, oversizedPrepStartOffset / totalDays * 100)}%`,
+                          width: `${(PREP_DAYS / totalDays) * 100}%`,
                         }}
                       />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>大件备货期: {oversizedPrepDays}天</p>
-                      <p>{addDays(oversizedLastShipDate, -oversizedPrepDays)} ~ {addDays(oversizedLastShipDate, -1)}</p>
+                      <p className="font-medium">大件备货期: {PREP_DAYS}天</p>
+                      <p>{oversizedPrepStartDate} ~ {addDays(oversizedPrepEndDate, -1)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">工厂生产和准备货物的时间</p>
                     </TooltipContent>
                   </Tooltip>
                   
@@ -785,8 +866,28 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
                       />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>大件运输期: {oversizedShippingDays}天</p>
-                      <p>最晚发货: {oversizedLastShipDate}</p>
+                      <p className="font-medium">大件运输期: {oversizedShippingDays}天</p>
+                      <p>最晚发货: {oversizedShipStartDate}</p>
+                      <p>预计到达: {addDays(oversizedShipEndDate, -1)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">从发货到入仓上架的时间</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  
+                  {/* 缓冲期 */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div
+                        className="absolute h-full bg-gray-300 cursor-pointer"
+                        style={{
+                          left: `${Math.max(0, oversizedBufferStartOffset / totalDays * 100)}%`,
+                          width: `${(BUFFER_DAYS / totalDays) * 100}%`,
+                        }}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="font-medium">缓冲时间: {BUFFER_DAYS}天</p>
+                      <p>{oversizedBufferStartDate} ~ {addDays(oversizedBufferEndDate, -1)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">运输到达后到促销开始前的安全缓冲期，用于应对物流延迟等意外情况</p>
                     </TooltipContent>
                   </Tooltip>
                   
@@ -802,7 +903,7 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
                       />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>促销期: {promoDays}天</p>
+                      <p className="font-medium">促销期: {promoDays}天</p>
                       <p>{thisYearStart} ~ {thisYearEnd}</p>
                     </TooltipContent>
                   </Tooltip>
@@ -817,10 +918,10 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
         </div>
 
         {/* 图例 */}
-        <div className="flex gap-6 mt-4 text-xs text-muted-foreground">
+        <div className="flex flex-wrap gap-4 mt-6 text-xs text-muted-foreground border-t pt-4">
           <div className="flex items-center gap-1">
             <div className="w-4 h-3 bg-blue-200 rounded" />
-            <span>标准件备货期</span>
+            <span>标准件备货期({PREP_DAYS}天)</span>
           </div>
           <div className="flex items-center gap-1">
             <div className="w-4 h-3 bg-blue-400 rounded" />
@@ -832,15 +933,19 @@ function GanttChart({ promotions, standardLeadTime, oversizedLeadTime, standardS
           </div>
           <div className="flex items-center gap-1">
             <div className="w-4 h-3 bg-orange-200 rounded" />
-            <span>大件备货期</span>
+            <span>大件备货期({PREP_DAYS}天)</span>
           </div>
           <div className="flex items-center gap-1">
             <div className="w-4 h-3 bg-orange-400 rounded" />
             <span>大件运输期</span>
           </div>
           <div className="flex items-center gap-1">
-            <div className="w-0.5 h-4 bg-red-500" />
-            <span>今天</span>
+            <div className="w-4 h-3 bg-gray-300 rounded" />
+            <span>缓冲时间({BUFFER_DAYS}天)</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-4 bg-red-500 rounded" />
+            <span className="font-medium text-red-500">今天</span>
           </div>
         </div>
       </div>

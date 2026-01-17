@@ -6,7 +6,6 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { Download, Upload, Search, Package, Factory, Plus, Minus, Truck } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -71,7 +70,16 @@ export default function FactoryPlan() {
     return options;
   }, []);
 
-  // 计算备货需求
+  // 计算选中月份距今的月数
+  const getMonthsFromNow = () => {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const [selectedYear, selectedMonthNum] = selectedMonth.split('-').map(Number);
+    const [currentYear, currentMonthNum] = currentMonth.split('-').map(Number);
+    return (selectedYear - currentYear) * 12 + (selectedMonthNum - currentMonthNum);
+  };
+
+  // 计算备货需求 - 改进建议备货量逻辑
   const calculateStockingNeeds = (sku: any) => {
     const dailySales = parseFloat(sku.dailySales?.toString() || '0');
     const fbaStock = sku.fbaStock || 0;
@@ -82,21 +90,43 @@ export default function FactoryPlan() {
     const factoryStock = factoryRecord?.quantity || 0;
     const additionalOrder = factoryRecord?.additionalOrder || 0;
 
-    // 计算运输周期
+    // 计算运输周期（备货期）
     const shippingDays = sku.category === 'standard'
-      ? (transportConfig?.standardShippingDays || 25) + (transportConfig?.standardShelfDays || 10)
-      : (transportConfig?.oversizedShippingDays || 35) + (transportConfig?.oversizedShelfDays || 10);
+      ? 35 // 标准件备货期35天
+      : 35; // 大件备货期35天
 
     // 计算月度需求（30天销量）
     const monthlyNeed = Math.ceil(dailySales * 30);
 
-    // 计算建议备货量
-    // 目标：保持2个月的库存周转
-    const targetStock = Math.ceil(dailySales * 60);
-    const currentTotal = fbaStock + inTransitStock + factoryStock;
-    const suggestedOrder = Math.max(0, targetStock - currentTotal);
+    // 计算距今月数
+    const monthsFromNow = getMonthsFromNow();
+    
+    // 建议备货量逻辑：
+    // - 当月：考虑FBA库存 + 在途库存 + 运输周期内的消耗
+    // - 未来月份：越远期越接近月度需求（因为在途库存会逐渐到达）
+    let suggestedOrder = 0;
+    
+    if (monthsFromNow <= 0) {
+      // 当月或过去月份：目标是保持2个月库存周转
+      const targetStock = Math.ceil(dailySales * 60);
+      const currentTotal = fbaStock + inTransitStock + factoryStock;
+      suggestedOrder = Math.max(0, targetStock - currentTotal);
+    } else if (monthsFromNow === 1) {
+      // 下个月：考虑在途会到达，但需要补充
+      const targetStock = Math.ceil(dailySales * 45);
+      const currentTotal = fbaStock + factoryStock; // 在途大部分会到达
+      suggestedOrder = Math.max(0, targetStock - currentTotal);
+    } else if (monthsFromNow === 2) {
+      // 后两个月：在途基本都会到达
+      const targetStock = Math.ceil(dailySales * 35);
+      const currentTotal = fbaStock + factoryStock;
+      suggestedOrder = Math.max(0, targetStock - currentTotal);
+    } else {
+      // 更远期：接近月度需求
+      suggestedOrder = monthlyNeed;
+    }
 
-    // 计算实际发货数量（本月）
+    // 计算实际发货数量（本月）- 从发货计划同步过来
     const monthStart = new Date(selectedMonth + '-01');
     const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
     const monthActuals = actualShipments?.filter((s: { skuId: number; shipDate: Date | string }) => {
@@ -106,10 +136,12 @@ export default function FactoryPlan() {
     }) || [];
     const totalActual = monthActuals.reduce((sum: number, a: { quantity?: number }) => sum + (a.quantity || 0), 0);
 
+    // 差异 = 实际发货 - 建议备货量（而非月度需求）
+    const difference = totalActual - suggestedOrder;
+    
     // 判断是否需要加单（红色）或过量（绿色）
-    const difference = totalActual - monthlyNeed;
-    const isAdditionalNeeded = difference < -monthlyNeed * 0.2; // 差20%以上需要加单
-    const isExcess = difference > monthlyNeed * 0.2; // 超20%以上为过量
+    const isAdditionalNeeded = difference < -suggestedOrder * 0.2; // 差20%以上需要加单
+    const isExcess = difference > suggestedOrder * 0.2; // 超20%以上为过量
 
     return {
       dailySales,
@@ -124,6 +156,7 @@ export default function FactoryPlan() {
       isAdditionalNeeded,
       isExcess,
       shippingDays,
+      monthsFromNow,
     };
   };
 
@@ -241,18 +274,14 @@ export default function FactoryPlan() {
     e.target.value = '';
   };
 
-  // 更新加单数量
-  const handleUpdateAdditional = (sku: any, delta: number) => {
-    const factoryRecord = factoryInventory?.find((f: { skuId: number }) => f.skuId === sku.id);
-    const currentAdditional = factoryRecord?.additionalOrder || 0;
-    const newAdditional = Math.max(0, currentAdditional + delta);
-
+  // 更新加单数量 - 改为直接输入
+  const handleUpdateAdditional = (sku: any, value: number) => {
     upsertMutation.mutate({
       brandName,
       skuId: sku.id,
       sku: sku.sku,
       month: selectedMonth,
-      additionalOrder: newAdditional,
+      additionalOrder: Math.max(0, value),
     });
   };
 
@@ -307,33 +336,19 @@ export default function FactoryPlan() {
                     <td>{needs.inTransitStock}</td>
                     <td>{needs.factoryStock}</td>
                     <td>{needs.monthlyNeed}</td>
-                    <td>{needs.suggestedOrder}</td>
+                    <td className="font-medium">{needs.suggestedOrder}</td>
                     <td>{needs.totalActual}</td>
                     <td className={needs.difference > 0 ? 'text-green-600' : needs.difference < 0 ? 'text-red-600' : ''}>
                       {needs.difference > 0 ? `+${needs.difference}` : needs.difference}
                     </td>
                     <td>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0"
-                          onClick={() => handleUpdateAdditional(sku, -10)}
-                        >
-                          <Minus className="w-3 h-3" />
-                        </Button>
-                        <span className={needs.additionalOrder > 0 ? 'text-red-600 font-medium' : ''}>
-                          {needs.additionalOrder}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0"
-                          onClick={() => handleUpdateAdditional(sku, 10)}
-                        >
-                          <Plus className="w-3 h-3" />
-                        </Button>
-                      </div>
+                      <Input
+                        type="number"
+                        className="w-20 h-8 text-center"
+                        value={needs.additionalOrder || ''}
+                        onChange={(e) => handleUpdateAdditional(sku, parseInt(e.target.value) || 0)}
+                        placeholder="0"
+                      />
                     </td>
                     <td>
                       {needs.isAdditionalNeeded ? (
@@ -518,6 +533,21 @@ export default function FactoryPlan() {
           </CardContent>
         </Card>
       </div>
+
+      {/* 说明卡片 */}
+      <Card className="bg-blue-50 border-blue-200">
+        <CardContent className="p-4">
+          <h4 className="font-medium text-blue-800 mb-2">建议备货量计算说明</h4>
+          <ul className="text-sm text-blue-700 space-y-1">
+            <li>• <strong>当月</strong>：目标保持2个月库存周转，考虑FBA库存+在途库存+工厂库存</li>
+            <li>• <strong>下月</strong>：目标保持1.5个月库存周转，在途库存大部分会到达</li>
+            <li>• <strong>后两月</strong>：目标保持1个月库存周转，在途库存基本都会到达</li>
+            <li>• <strong>更远期</strong>：接近月度需求（日销×30天）</li>
+            <li>• <strong>差异</strong>：实际发货 - 建议备货量，负数表示需要补货</li>
+            <li>• 备货期：标准件和大件均为35天</li>
+          </ul>
+        </CardContent>
+      </Card>
 
       {/* 备货计划表 */}
       <Card>

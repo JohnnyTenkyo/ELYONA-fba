@@ -10,9 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { Plus, Upload, Download, Trash2, Edit, Search, Package } from 'lucide-react';
+import { Plus, Upload, Download, Trash2, Edit, Search, Package, Truck } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function SkuManagement() {
@@ -20,7 +21,7 @@ export default function SkuManagement() {
   const utils = trpc.useUtils();
   
   const [searchTerm, setSearchTerm] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [categoryTab, setCategoryTab] = useState<'standard' | 'oversized'>('standard');
   const [showDiscontinued, setShowDiscontinued] = useState(false);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingSku, setEditingSku] = useState<any>(null);
@@ -86,7 +87,7 @@ export default function SkuManagement() {
   const resetForm = () => {
     setFormData({
       sku: '',
-      category: 'standard',
+      category: categoryTab, // 默认使用当前选中的类别
       dailySales: '',
       notes: '',
       isDiscontinued: false,
@@ -194,12 +195,12 @@ export default function SkuManagement() {
     XLSX.writeFile(wb, 'SKU导入模板.xlsx');
   };
 
-  // 过滤SKU
+  // 过滤SKU - 按当前选中的类别
   const filteredSkus = skus?.filter(sku => {
     if (searchTerm && !sku.sku.toLowerCase().includes(searchTerm.toLowerCase())) {
       return false;
     }
-    if (categoryFilter !== 'all' && sku.category !== categoryFilter) {
+    if (sku.category !== categoryTab) {
       return false;
     }
     if (!showDiscontinued && sku.isDiscontinued) {
@@ -208,8 +209,194 @@ export default function SkuManagement() {
     return true;
   }) || [];
 
+  // 计算各类别统计
+  const standardCount = skus?.filter(s => s.category === 'standard' && (!s.isDiscontinued || showDiscontinued)).length || 0;
+  const oversizedCount = skus?.filter(s => s.category === 'oversized' && (!s.isDiscontinued || showDiscontinued)).length || 0;
+
+  // 渲染SKU表格
+  const renderSkuTable = () => (
+    <div className="overflow-x-auto">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>日销量</th>
+            <th>FBA库存</th>
+            <th>在途库存</th>
+            <th>状态</th>
+            <th>备注</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {isLoading ? (
+            <tr>
+              <td colSpan={7} className="text-center py-8">加载中...</td>
+            </tr>
+          ) : filteredSkus.length === 0 ? (
+            <tr>
+              <td colSpan={7} className="text-center py-8">
+                {categoryTab === 'standard' ? (
+                  <Package className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
+                ) : (
+                  <Truck className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
+                )}
+                <p className="text-muted-foreground">暂无{categoryTab === 'standard' ? '标准件' : '大件'}SKU数据</p>
+              </td>
+            </tr>
+          ) : (
+            filteredSkus.map(sku => (
+              <tr key={sku.id}>
+                <td className="font-medium">{sku.sku}</td>
+                <td>{sku.dailySales || '-'}</td>
+                <td>{sku.fbaStock || 0}</td>
+                <td>{sku.inTransitStock || 0}</td>
+                <td>
+                  {sku.isDiscontinued ? (
+                    <Badge variant="outline" className="text-gray-500">已淘汰</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-green-600">在售</Badge>
+                  )}
+                </td>
+                <td className="max-w-xs truncate">{sku.notes || '-'}</td>
+                <td>
+                  <div className="flex items-center gap-2">
+                    <Dialog open={editingSku?.id === sku.id} onOpenChange={(open) => !open && setEditingSku(null)}>
+                      <DialogTrigger asChild>
+                        <Button variant="ghost" size="sm" onClick={() => handleEdit(sku)}>
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>编辑SKU</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-4 py-4">
+                          <div className="space-y-2">
+                            <Label>SKU</Label>
+                            <Input
+                              value={formData.sku}
+                              onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>类别</Label>
+                            <Select
+                              value={formData.category}
+                              onValueChange={(v) => setFormData({ ...formData, category: v as any })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="standard">标准件</SelectItem>
+                                <SelectItem value="oversized">大件</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>日销量</Label>
+                            <Input
+                              type="number"
+                              value={formData.dailySales}
+                              onChange={(e) => setFormData({ ...formData, dailySales: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>备注</Label>
+                            <Textarea
+                              value={formData.notes}
+                              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Switch
+                              checked={formData.isDiscontinued}
+                              onCheckedChange={(v) => setFormData({ ...formData, isDiscontinued: v })}
+                            />
+                            <Label>已淘汰</Label>
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setEditingSku(null)}>取消</Button>
+                          <Button onClick={handleSubmit} disabled={updateMutation.isPending}>
+                            {updateMutation.isPending ? '保存中...' : '保存'}
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="sm" className="text-destructive">
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>确认删除？</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            确定要删除SKU "{sku.sku}" 吗？此操作无法撤销。
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>取消</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => deleteMutation.mutate({ id: sku.id })}
+                            className="bg-destructive text-destructive-foreground"
+                          >
+                            删除
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
+      {/* 类别切换 */}
+      <div className="flex gap-4">
+        <button
+          onClick={() => setCategoryTab('standard')}
+          className={`flex items-center gap-3 px-6 py-4 rounded-lg border-2 transition-all ${
+            categoryTab === 'standard' 
+              ? 'border-primary bg-primary/5' 
+              : 'border-border hover:border-primary/50'
+          }`}
+        >
+          <Package className={`w-6 h-6 ${categoryTab === 'standard' ? 'text-primary' : 'text-muted-foreground'}`} />
+          <div className="text-left">
+            <p className={`font-medium ${categoryTab === 'standard' ? 'text-primary' : ''}`}>标准件</p>
+            <p className="text-sm text-muted-foreground">
+              共 {standardCount} 个SKU
+            </p>
+          </div>
+        </button>
+        <button
+          onClick={() => setCategoryTab('oversized')}
+          className={`flex items-center gap-3 px-6 py-4 rounded-lg border-2 transition-all ${
+            categoryTab === 'oversized' 
+              ? 'border-primary bg-primary/5' 
+              : 'border-border hover:border-primary/50'
+          }`}
+        >
+          <Truck className={`w-6 h-6 ${categoryTab === 'oversized' ? 'text-primary' : 'text-muted-foreground'}`} />
+          <div className="text-left">
+            <p className={`font-medium ${categoryTab === 'oversized' ? 'text-primary' : ''}`}>大件</p>
+            <p className="text-sm text-muted-foreground">
+              共 {oversizedCount} 个SKU
+            </p>
+          </div>
+        </button>
+      </div>
+
       {/* 工具栏 */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -222,16 +409,6 @@ export default function SkuManagement() {
               className="pl-10 w-64"
             />
           </div>
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-32">
-              <SelectValue placeholder="类别" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部</SelectItem>
-              <SelectItem value="standard">标准件</SelectItem>
-              <SelectItem value="oversized">大件</SelectItem>
-            </SelectContent>
-          </Select>
           <div className="flex items-center gap-2">
             <Switch
               checked={showDiscontinued}
@@ -353,160 +530,25 @@ export default function SkuManagement() {
         </div>
       </div>
 
-      {/* 统计信息 */}
-      <div className="flex gap-4 text-sm text-muted-foreground">
-        <span>共 {filteredSkus.length} 个SKU</span>
-        <span>标准件: {filteredSkus.filter(s => s.category === 'standard').length}</span>
-        <span>大件: {filteredSkus.filter(s => s.category === 'oversized').length}</span>
-      </div>
-
       {/* SKU列表 */}
       <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            {categoryTab === 'standard' ? (
+              <>
+                <Package className="w-5 h-5 text-blue-500" />
+                标准件SKU列表 ({filteredSkus.length}个)
+              </>
+            ) : (
+              <>
+                <Truck className="w-5 h-5 text-orange-500" />
+                大件SKU列表 ({filteredSkus.length}个)
+              </>
+            )}
+          </CardTitle>
+        </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>类别</th>
-                  <th>日销量</th>
-                  <th>FBA库存</th>
-                  <th>在途库存</th>
-                  <th>状态</th>
-                  <th>备注</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={8} className="text-center py-8">加载中...</td>
-                  </tr>
-                ) : filteredSkus.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="text-center py-8">
-                      <Package className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
-                      <p className="text-muted-foreground">暂无SKU数据</p>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredSkus.map(sku => (
-                    <tr key={sku.id}>
-                      <td className="font-medium">{sku.sku}</td>
-                      <td>
-                        <Badge variant={sku.category === 'standard' ? 'default' : 'secondary'}>
-                          {sku.category === 'standard' ? '标准件' : '大件'}
-                        </Badge>
-                      </td>
-                      <td>{sku.dailySales || '-'}</td>
-                      <td>{sku.fbaStock || 0}</td>
-                      <td>{sku.inTransitStock || 0}</td>
-                      <td>
-                        {sku.isDiscontinued ? (
-                          <Badge variant="outline" className="text-gray-500">已淘汰</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-green-600">在售</Badge>
-                        )}
-                      </td>
-                      <td className="max-w-xs truncate">{sku.notes || '-'}</td>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <Dialog open={editingSku?.id === sku.id} onOpenChange={(open) => !open && setEditingSku(null)}>
-                            <DialogTrigger asChild>
-                              <Button variant="ghost" size="sm" onClick={() => handleEdit(sku)}>
-                                <Edit className="w-4 h-4" />
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent>
-                              <DialogHeader>
-                                <DialogTitle>编辑SKU</DialogTitle>
-                              </DialogHeader>
-                              <div className="space-y-4 py-4">
-                                <div className="space-y-2">
-                                  <Label>SKU</Label>
-                                  <Input
-                                    value={formData.sku}
-                                    onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>类别</Label>
-                                  <Select
-                                    value={formData.category}
-                                    onValueChange={(v) => setFormData({ ...formData, category: v as any })}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="standard">标准件</SelectItem>
-                                      <SelectItem value="oversized">大件</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>日销量</Label>
-                                  <Input
-                                    type="number"
-                                    value={formData.dailySales}
-                                    onChange={(e) => setFormData({ ...formData, dailySales: e.target.value })}
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>备注</Label>
-                                  <Textarea
-                                    value={formData.notes}
-                                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                                  />
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Switch
-                                    checked={formData.isDiscontinued}
-                                    onCheckedChange={(v) => setFormData({ ...formData, isDiscontinued: v })}
-                                  />
-                                  <Label>已淘汰</Label>
-                                </div>
-                              </div>
-                              <DialogFooter>
-                                <Button variant="outline" onClick={() => setEditingSku(null)}>取消</Button>
-                                <Button onClick={handleSubmit} disabled={updateMutation.isPending}>
-                                  {updateMutation.isPending ? '保存中...' : '保存'}
-                                </Button>
-                              </DialogFooter>
-                            </DialogContent>
-                          </Dialog>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="sm" className="text-destructive">
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>确认删除？</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  确定要删除SKU "{sku.sku}" 吗？此操作无法撤销。
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>取消</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => deleteMutation.mutate({ id: sku.id })}
-                                  className="bg-destructive text-destructive-foreground"
-                                >
-                                  删除
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          {renderSkuTable()}
         </CardContent>
       </Card>
     </div>

@@ -16,8 +16,10 @@ import {
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import * as crypto from 'crypto';
+import { localDb } from './localDb';
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _useLocalDb = false;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
@@ -28,7 +30,16 @@ export async function getDb() {
       _db = null;
     }
   }
+  if (!_db) {
+    _useLocalDb = true;
+    console.log("[Database] Using local memory database");
+  }
   return _db;
+}
+
+// 检查是否使用本地数据库
+function useLocal(): boolean {
+  return !process.env.DATABASE_URL || _useLocalDb;
 }
 
 // 密码哈希函数
@@ -97,6 +108,9 @@ export async function upsertUser(user: InsertUser): Promise<void> {
 }
 
 export async function getUserByOpenId(openId: string) {
+  if (useLocal()) {
+    return localDb.getUserByOpenId(openId);
+  }
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot get user: database not available");
@@ -109,6 +123,9 @@ export async function getUserByOpenId(openId: string) {
 
 // 用户名密码登录
 export async function getUserByUsername(username: string) {
+  if (useLocal()) {
+    return localDb.getUserByUsername(username);
+  }
   const db = await getDb();
   if (!db) return undefined;
   
@@ -118,6 +135,9 @@ export async function getUserByUsername(username: string) {
 
 // 注册新用户
 export async function createUserWithPassword(username: string, password: string, brandName?: string) {
+  if (useLocal()) {
+    return localDb.createUser(username, password, brandName);
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -138,6 +158,10 @@ export async function createUserWithPassword(username: string, password: string,
 
 // 更新密码
 export async function updateUserPassword(userId: number, newPassword: string) {
+  if (useLocal()) {
+    localDb.updateUserPassword(userId, newPassword);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -147,6 +171,9 @@ export async function updateUserPassword(userId: number, newPassword: string) {
 
 // ==================== SKU相关 ====================
 export async function getSkusByBrand(brandName: string) {
+  if (useLocal()) {
+    return localDb.getSkusByBrand(brandName);
+  }
   const db = await getDb();
   if (!db) return [];
   
@@ -154,6 +181,9 @@ export async function getSkusByBrand(brandName: string) {
 }
 
 export async function getSkuById(id: number) {
+  if (useLocal()) {
+    return localDb.getSkuById(id);
+  }
   const db = await getDb();
   if (!db) return undefined;
   
@@ -162,6 +192,9 @@ export async function getSkuById(id: number) {
 }
 
 export async function getSkuBySku(sku: string, brandName: string) {
+  if (useLocal()) {
+    return localDb.getSkuBySku(sku, brandName);
+  }
   const db = await getDb();
   if (!db) return undefined;
   
@@ -172,6 +205,9 @@ export async function getSkuBySku(sku: string, brandName: string) {
 }
 
 export async function createSku(data: InsertSku) {
+  if (useLocal()) {
+    return localDb.createSku(data as any);
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -180,6 +216,10 @@ export async function createSku(data: InsertSku) {
 }
 
 export async function updateSku(id: number, data: Partial<InsertSku>) {
+  if (useLocal()) {
+    localDb.updateSku(id, data as any);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -187,6 +227,10 @@ export async function updateSku(id: number, data: Partial<InsertSku>) {
 }
 
 export async function deleteSku(id: number) {
+  if (useLocal()) {
+    localDb.deleteSku(id);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -194,6 +238,10 @@ export async function deleteSku(id: number) {
 }
 
 export async function clearAllSkus(brandName: string) {
+  if (useLocal()) {
+    localDb.clearAllSkus(brandName);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -201,6 +249,17 @@ export async function clearAllSkus(brandName: string) {
 }
 
 export async function batchUpsertSkus(items: InsertSku[]) {
+  if (useLocal()) {
+    for (const item of items) {
+      const existing = localDb.getSkuBySku(item.sku, item.brandName);
+      if (existing) {
+        localDb.updateSku(existing.id, item as any);
+      } else {
+        localDb.createSku(item as any);
+      }
+    }
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -242,6 +301,17 @@ export async function getSyncHistoryByBrand(brandName: string) {
 
 // ==================== 运输配置 ====================
 export async function getTransportConfig(brandName: string) {
+  if (useLocal()) {
+    return localDb.getTransportConfig(brandName) || {
+      id: 1,
+      brandName,
+      standardShippingDays: 25,
+      standardShelfDays: 10,
+      oversizedShippingDays: 35,
+      oversizedShelfDays: 10,
+      updatedAt: new Date(),
+    };
+  }
   const db = await getDb();
   if (!db) return undefined;
   
@@ -252,6 +322,10 @@ export async function getTransportConfig(brandName: string) {
 }
 
 export async function upsertTransportConfig(brandName: string, data: Partial<InsertTransportConfig>) {
+  if (useLocal()) {
+    localDb.upsertTransportConfig(brandName, data as any);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -265,6 +339,9 @@ export async function upsertTransportConfig(brandName: string, data: Partial<Ins
 
 // ==================== 货件管理 ====================
 export async function getShipmentsByBrand(brandName: string) {
+  if (useLocal()) {
+    return localDb.getShipmentsByBrand(brandName);
+  }
   const db = await getDb();
   if (!db) return [];
   
@@ -274,6 +351,9 @@ export async function getShipmentsByBrand(brandName: string) {
 }
 
 export async function getShipmentById(id: number) {
+  if (useLocal()) {
+    return localDb.getShipmentById(id);
+  }
   const db = await getDb();
   if (!db) return undefined;
   
@@ -282,6 +362,9 @@ export async function getShipmentById(id: number) {
 }
 
 export async function createShipment(data: InsertShipment) {
+  if (useLocal()) {
+    return localDb.createShipment(data as any);
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -290,6 +373,10 @@ export async function createShipment(data: InsertShipment) {
 }
 
 export async function updateShipment(id: number, data: Partial<InsertShipment>) {
+  if (useLocal()) {
+    localDb.updateShipment(id, data as any);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -297,6 +384,10 @@ export async function updateShipment(id: number, data: Partial<InsertShipment>) 
 }
 
 export async function deleteShipment(id: number) {
+  if (useLocal()) {
+    localDb.deleteShipment(id);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -305,6 +396,10 @@ export async function deleteShipment(id: number) {
 }
 
 export async function clearAllShipments(brandName: string) {
+  if (useLocal()) {
+    localDb.clearAllShipments(brandName);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -317,6 +412,9 @@ export async function clearAllShipments(brandName: string) {
 
 // 货件明细
 export async function getShipmentItems(shipmentId: number) {
+  if (useLocal()) {
+    return localDb.getShipmentItems(shipmentId);
+  }
   const db = await getDb();
   if (!db) return [];
   
@@ -324,6 +422,10 @@ export async function getShipmentItems(shipmentId: number) {
 }
 
 export async function createShipmentItem(data: InsertShipmentItem) {
+  if (useLocal()) {
+    localDb.createShipmentItem(data as any);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -331,50 +433,42 @@ export async function createShipmentItem(data: InsertShipmentItem) {
 }
 
 export async function getShipmentItemsBySku(skuId: number) {
+  if (useLocal()) {
+    return localDb.getShipmentItemsBySkuId(skuId);
+  }
   const db = await getDb();
   if (!db) return [];
   
-  // 只返回运输中的货件
-  return db.select({
-    item: shipmentItems,
-    shipment: shipments
-  })
-  .from(shipmentItems)
-  .innerJoin(shipments, eq(shipmentItems.shipmentId, shipments.id))
-  .where(and(
-    eq(shipmentItems.skuId, skuId),
-    eq(shipments.status, 'shipping')
-  ));
-}
-
-// 获取品牌所有货件明细
-export async function getAllShipmentItems(brandName: string) {
-  const db = await getDb();
-  if (!db) return [];
-  
-  return db.select({
-    id: shipmentItems.id,
-    shipmentId: shipmentItems.shipmentId,
-    skuId: shipmentItems.skuId,
-    sku: shipmentItems.sku,
-    quantity: shipmentItems.quantity,
-  })
-  .from(shipmentItems)
-  .innerJoin(shipments, eq(shipmentItems.shipmentId, shipments.id))
-  .where(eq(shipments.brandName, brandName));
+  // 获取该SKU的所有货件明细，并关联货件信息
+  const items = await db.select().from(shipmentItems).where(eq(shipmentItems.skuId, skuId));
+  const result = [];
+  for (const item of items) {
+    const shipment = await getShipmentById(item.shipmentId);
+    // 只返回运输中的货件
+    if (shipment && shipment.status === 'shipping') {
+      result.push({ item, shipment });
+    }
+  }
+  return result;
 }
 
 // ==================== 促销管理 ====================
 export async function getPromotionsByBrand(brandName: string) {
+  if (useLocal()) {
+    return localDb.getPromotionsByBrand(brandName);
+  }
   const db = await getDb();
   if (!db) return [];
   
   return db.select().from(promotions)
     .where(eq(promotions.brandName, brandName))
-    .orderBy(desc(promotions.createdAt));
+    .orderBy(promotions.startDate);
 }
 
 export async function getPromotionById(id: number) {
+  if (useLocal()) {
+    return localDb.getPromotionById(id);
+  }
   const db = await getDb();
   if (!db) return undefined;
   
@@ -383,6 +477,9 @@ export async function getPromotionById(id: number) {
 }
 
 export async function createPromotion(data: InsertPromotion) {
+  if (useLocal()) {
+    return localDb.createPromotion(data as any);
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -391,6 +488,10 @@ export async function createPromotion(data: InsertPromotion) {
 }
 
 export async function updatePromotion(id: number, data: Partial<InsertPromotion>) {
+  if (useLocal()) {
+    localDb.updatePromotion(id, data as any);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -398,6 +499,10 @@ export async function updatePromotion(id: number, data: Partial<InsertPromotion>
 }
 
 export async function deletePromotion(id: number) {
+  if (useLocal()) {
+    localDb.deletePromotion(id);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -405,36 +510,70 @@ export async function deletePromotion(id: number) {
   await db.delete(promotions).where(eq(promotions.id, id));
 }
 
+export async function clearAllPromotions(brandName: string) {
+  if (useLocal()) {
+    localDb.clearAllPromotions(brandName);
+    return;
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const brandPromotions = await getPromotionsByBrand(brandName);
+  for (const p of brandPromotions) {
+    await db.delete(promotionSales).where(eq(promotionSales.promotionId, p.id));
+  }
+  await db.delete(promotions).where(eq(promotions.brandName, brandName));
+}
+
 // 促销销量
 export async function getPromotionSales(promotionId: number) {
+  if (useLocal()) {
+    return localDb.getPromotionSales(promotionId);
+  }
   const db = await getDb();
   if (!db) return [];
   
   return db.select().from(promotionSales).where(eq(promotionSales.promotionId, promotionId));
 }
 
-export async function upsertPromotionSale(data: InsertPromotionSale) {
+export async function createPromotionSale(data: InsertPromotionSale) {
+  if (useLocal()) {
+    localDb.createPromotionSale(data as any);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  const existing = await db.select().from(promotionSales)
-    .where(and(
-      eq(promotionSales.promotionId, data.promotionId),
-      eq(promotionSales.skuId, data.skuId)
-    ))
-    .limit(1);
-  
-  if (existing.length > 0) {
-    await db.update(promotionSales)
-      .set({ lastYearSales: data.lastYearSales })
-      .where(eq(promotionSales.id, existing[0].id));
-  } else {
-    await db.insert(promotionSales).values(data);
+  await db.insert(promotionSales).values(data);
+}
+
+export async function updatePromotionSale(id: number, data: Partial<InsertPromotionSale>) {
+  if (useLocal()) {
+    localDb.updatePromotionSale(id, data as any);
+    return;
   }
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.update(promotionSales).set(data).where(eq(promotionSales.id, id));
+}
+
+export async function deletePromotionSalesByPromotion(promotionId: number) {
+  if (useLocal()) {
+    localDb.deletePromotionSalesByPromotion(promotionId);
+    return;
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.delete(promotionSales).where(eq(promotionSales.promotionId, promotionId));
 }
 
 // ==================== 春节配置 ====================
 export async function getSpringFestivalConfig(brandName: string, year: number) {
+  if (useLocal()) {
+    return localDb.getSpringFestivalConfig(brandName, year);
+  }
   const db = await getDb();
   if (!db) return undefined;
   
@@ -447,55 +586,106 @@ export async function getSpringFestivalConfig(brandName: string, year: number) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-export async function upsertSpringFestivalConfig(brandName: string, year: number, data: Partial<InsertSpringFestivalConfig>) {
+export async function upsertSpringFestivalConfig(brandName: string, year: number, startDate: string, endDate: string) {
+  if (useLocal()) {
+    localDb.upsertSpringFestivalConfig(brandName, year, startDate, endDate);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
   const existing = await getSpringFestivalConfig(brandName, year);
   if (existing) {
-    await db.update(springFestivalConfig).set(data).where(eq(springFestivalConfig.id, existing.id));
+    await db.update(springFestivalConfig)
+      .set({ startDate, endDate })
+      .where(eq(springFestivalConfig.id, existing.id));
   } else {
-    await db.insert(springFestivalConfig).values({ ...data, brandName, year });
+    await db.insert(springFestivalConfig).values({ brandName, year, startDate, endDate });
   }
 }
 
 // ==================== 发货计划 ====================
 export async function getShippingPlansByBrand(brandName: string) {
+  if (useLocal()) {
+    return localDb.getShippingPlans(brandName);
+  }
   const db = await getDb();
   if (!db) return [];
   
   return db.select().from(shippingPlans)
     .where(eq(shippingPlans.brandName, brandName))
-    .orderBy(desc(shippingPlans.createdAt));
+    .orderBy(shippingPlans.month);
 }
 
-export async function createShippingPlan(data: InsertShippingPlan) {
+export async function upsertShippingPlan(data: InsertShippingPlan) {
+  if (useLocal()) {
+    localDb.upsertShippingPlan(data as any);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  await db.insert(shippingPlans).values(data);
+  const existing = await db.select().from(shippingPlans)
+    .where(and(
+      eq(shippingPlans.brandName, data.brandName),
+      eq(shippingPlans.skuId, data.skuId),
+      eq(shippingPlans.month, data.month)
+    ))
+    .limit(1);
+  
+  if (existing.length > 0) {
+    await db.update(shippingPlans)
+      .set({ plannedQuantity: data.plannedQuantity })
+      .where(eq(shippingPlans.id, existing[0].id));
+  } else {
+    await db.insert(shippingPlans).values(data);
+  }
 }
 
-// 实际发货记录
+// ==================== 实际发货 ====================
 export async function getActualShipmentsByBrand(brandName: string) {
+  if (useLocal()) {
+    return localDb.getActualShipments(brandName);
+  }
   const db = await getDb();
   if (!db) return [];
   
   return db.select().from(actualShipments)
     .where(eq(actualShipments.brandName, brandName))
-    .orderBy(desc(actualShipments.createdAt));
+    .orderBy(actualShipments.month);
 }
 
-export async function getActualShipmentsBySku(skuId: number) {
+export async function upsertActualShipment(data: InsertActualShipment) {
+  if (useLocal()) {
+    localDb.upsertActualShipment(data as any);
+    return;
+  }
   const db = await getDb();
-  if (!db) return [];
+  if (!db) throw new Error("Database not available");
   
-  return db.select().from(actualShipments)
-    .where(eq(actualShipments.skuId, skuId))
-    .orderBy(desc(actualShipments.shipDate));
+  const existing = await db.select().from(actualShipments)
+    .where(and(
+      eq(actualShipments.brandName, data.brandName),
+      eq(actualShipments.skuId, data.skuId),
+      eq(actualShipments.month, data.month),
+      eq(actualShipments.category, data.category)
+    ))
+    .limit(1);
+  
+  if (existing.length > 0) {
+    await db.update(actualShipments)
+      .set({ quantity: data.quantity })
+      .where(eq(actualShipments.id, existing[0].id));
+  } else {
+    await db.insert(actualShipments).values(data);
+  }
 }
 
 export async function createActualShipment(data: InsertActualShipment) {
+  if (useLocal()) {
+    localDb.upsertActualShipment(data as any);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -511,6 +701,9 @@ export async function deleteActualShipment(id: number) {
 
 // ==================== 工厂库存 ====================
 export async function getFactoryInventoryByBrand(brandName: string, month?: string) {
+  if (useLocal()) {
+    return localDb.getFactoryInventory(brandName);
+  }
   const db = await getDb();
   if (!db) return [];
   
@@ -527,6 +720,10 @@ export async function getFactoryInventoryByBrand(brandName: string, month?: stri
 }
 
 export async function upsertFactoryInventory(data: InsertFactoryInventory) {
+  if (useLocal()) {
+    localDb.upsertFactoryInventory(data as any);
+    return;
+  }
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
@@ -553,6 +750,11 @@ export async function upsertFactoryInventory(data: InsertFactoryInventory) {
 
 // 初始化默认用户
 export async function initDefaultUser() {
+  if (useLocal()) {
+    // 本地数据库在构造时已初始化默认用户
+    console.log('[Database] Using local memory database with default user ELYONA');
+    return;
+  }
   const db = await getDb();
   if (!db) return;
   
